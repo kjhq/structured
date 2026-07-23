@@ -27,7 +27,8 @@ services:
       BOT_API_SECRET: ${BOT_API_SECRET:-change-me-bot-secret}
       CORS_ORIGINS: '["*"]'
     ports:
-      - "127.0.0.1:8003:8000"
+      # Public bind so phone widget can hit VPS:8003 (auth still required)
+      - "0.0.0.0:8003:8000"
     depends_on:
       postgres:
         condition: service_healthy
