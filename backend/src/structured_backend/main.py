@@ -7,16 +7,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from structured_backend.api.router import api_router
 from structured_backend.config import settings
 from structured_backend.errors import AppError, app_error_handler
-from structured_backend.mcp_server.server import mcp, set_api_key
+from structured_backend.mcp_server.server import mcp, set_bot_secret, set_discord_id
 
 
-class ApiKeyContextMiddleware(BaseHTTPMiddleware):
+class BotAuthContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        set_api_key(request.headers.get("x-api-key"))
+        set_bot_secret(request.headers.get("x-bot-secret"))
+        set_discord_id(request.headers.get("x-discord-id"))
         try:
             return await call_next(request)
         finally:
-            set_api_key(None)
+            set_bot_secret(None)
+            set_discord_id(None)
 
 
 @asynccontextmanager
@@ -41,7 +43,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(ApiKeyContextMiddleware)
+    app.add_middleware(BotAuthContextMiddleware)
     app.include_router(api_router)
 
     app.mount("/mcp", mcp.streamable_http_app())

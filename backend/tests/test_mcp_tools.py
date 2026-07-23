@@ -1,4 +1,5 @@
 import pytest
+from datetime import date
 
 from structured_backend.mcp_server.tools import (
     ResponseFormat,
@@ -6,21 +7,20 @@ from structured_backend.mcp_server.tools import (
     planner_find_tasks,
     planner_get_overview,
 )
-from structured_backend.services.users import create_user, get_user_by_api_key
+from structured_backend.services import users as user_service
 
 
 @pytest.mark.asyncio
 async def test_planner_overview_and_find(db_session):
-    user, raw = await create_user(db_session, timezone="Asia/Kolkata")
-    # re-fetch via key to mirror auth path
-    user = await get_user_by_api_key(db_session, raw)
-    assert user is not None
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="mcp-test-user", timezone="Asia/Kolkata"
+    )
 
     created = await planner_create_task(
         db_session,
         user,
         title="Leftover",
-        day=__import__("datetime").date(2026, 7, 22),
+        day=date(2026, 7, 22),
         is_all_day=True,
     )
     assert created["title"] == "Leftover"

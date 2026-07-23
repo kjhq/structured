@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from structured_backend.config import settings
 from structured_backend.db.session import SessionLocal
 from structured_backend.errors import AppError
 from structured_backend.mcp_server import tools as planner
@@ -49,14 +50,19 @@ mcp = FastMCP(
     transport_security=_mcp_transport_security,
 )
 
-_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar("api_key", default=None)
+_bot_secret: contextvars.ContextVar[str | None] = contextvars.ContextVar("bot_secret", default=None)
+_discord_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("discord_id", default=None)
 _session_factory: contextvars.ContextVar[async_sessionmaker[AsyncSession] | None] = contextvars.ContextVar(
     "session_factory", default=None
 )
 
 
-def set_api_key(key: str | None) -> None:
-    _api_key.set(key)
+def set_bot_secret(secret: str | None) -> None:
+    _bot_secret.set(secret)
+
+
+def set_discord_id(discord_id: str | None) -> None:
+    _discord_id.set(discord_id)
 
 
 def set_session_factory(factory: async_sessionmaker[AsyncSession] | None) -> None:
@@ -64,15 +70,21 @@ def set_session_factory(factory: async_sessionmaker[AsyncSession] | None) -> Non
 
 
 async def _session_and_user():
-    key = _api_key.get()
-    if not key:
-        raise AppError("unauthorized", "Missing API key", status_code=401, hint="Pass X-API-Key")
+    secret = _bot_secret.get()
+    discord_id = _discord_id.get()
+    if not secret or secret != settings.bot_api_secret:
+        raise AppError("unauthorized", "Invalid bot secret", status_code=401)
+    if not discord_id:
+        raise AppError(
+            "unauthorized",
+            "Missing X-Discord-Id",
+            status_code=401,
+            hint="Bot must set Discord user id",
+        )
     factory = _session_factory.get() or SessionLocal
     session = factory()
     try:
-        user = await user_service.get_user_by_api_key(session, key)
-        if user is None:
-            raise AppError("unauthorized", "Invalid API key", status_code=401)
+        user = await user_service.ensure_user_for_discord(session, discord_id=discord_id)
         yield session, user
     finally:
         await session.close()

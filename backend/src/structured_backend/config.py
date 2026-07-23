@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://structured:structured@localhost:5432/structured"
     secret_key: str = "change-me"
+    bot_api_secret: str = "dev-bot-secret"
     api_key: str = "dev-api-key"
     cors_origins: list[str] = ["http://localhost:3000"]
 
