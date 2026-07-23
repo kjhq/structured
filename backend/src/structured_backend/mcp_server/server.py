@@ -7,12 +7,37 @@ from datetime import date, time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from structured_backend.db.session import SessionLocal
 from structured_backend.errors import AppError
 from structured_backend.mcp_server import tools as planner
 from structured_backend.services import users as user_service
+
+# Docker Compose bot uses Host: api:8000; localhost for host-side curls.
+# Without this, streamable HTTP returns 421 Misdirected Request.
+_mcp_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "127.0.0.1",
+        "127.0.0.1:*",
+        "localhost",
+        "localhost:*",
+        "[::1]",
+        "[::1]:*",
+        "api",
+        "api:*",
+    ],
+    allowed_origins=[
+        "http://127.0.0.1",
+        "http://127.0.0.1:*",
+        "http://localhost",
+        "http://localhost:*",
+        "http://api",
+        "http://api:*",
+    ],
+)
 
 mcp = FastMCP(
     "structured-planner",
@@ -21,6 +46,7 @@ mcp = FastMCP(
         "do not ask for timezone. Incomplete tasks never auto-complete overnight; use "
         "open_backlog to find previously unticked dated tasks. Prefer concise responses."
     ),
+    transport_security=_mcp_transport_security,
 )
 
 _api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar("api_key", default=None)
