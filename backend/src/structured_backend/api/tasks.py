@@ -2,10 +2,10 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 
-from structured_backend.api.auth import require_api_key
+from structured_backend.api.deps import get_current_user
 from structured_backend.schemas.task import TaskCreate, TaskRead, TaskUpdate
 
-router = APIRouter(dependencies=[Depends(require_api_key)])
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get("", response_model=list[TaskRead])
@@ -13,9 +13,7 @@ async def list_tasks(
     day: date | None = None,
     day_from: date | None = None,
     day_to: date | None = None,
-    timezone: str = Query(default="UTC"),
 ) -> list[TaskRead]:
-    """Single day or date range."""
     raise NotImplementedError
 
 

@@ -1,11 +1,9 @@
-from datetime import date
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter, Depends, Query
+from structured_backend.api.deps import get_current_user
+from structured_backend.schemas.task import TaskRead
 
-from structured_backend.api.auth import require_api_key
-from structured_backend.schemas.task import TaskCreate, TaskRead, TaskUpdate
-
-router = APIRouter(dependencies=[Depends(require_api_key)])
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get("/inbox", response_model=list[TaskRead])
@@ -15,6 +13,6 @@ async def get_inbox() -> list[TaskRead]:
 
 
 @router.get("/today", response_model=list[TaskRead])
-async def get_today(timezone: str = Query(default="UTC")) -> list[TaskRead]:
-    """Tasks scheduled for today in the given timezone."""
+async def get_today() -> list[TaskRead]:
+    """Tasks scheduled for today in the user's timezone."""
     raise NotImplementedError
