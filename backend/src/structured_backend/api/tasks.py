@@ -6,16 +6,58 @@ from fastapi import APIRouter, Header, Response
 from structured_backend.api.deps import CurrentUser, DbSession
 from structured_backend.errors import AppError
 from structured_backend.schemas.task import TaskCreate, TaskRead, TaskUpdate
+from structured_backend.schemas.timeline import TimelineItem
+from structured_backend.services.series import SeriesService
 from structured_backend.services.tasks import TaskService
 
 router = APIRouter()
 
 
-def _etag_for(tasks: list) -> str:
-    if not tasks:
+def _etag_for(items: list) -> str:
+    if not items:
         return '"empty"'
-    latest = max(t.updated_at.isoformat() for t in tasks)
-    return f'"{latest}-{len(tasks)}"'
+    stamp = f"{len(items)}-{items[0].id}"
+    return f'"{stamp}"'
+
+
+def _task_to_item(t) -> TimelineItem:
+    return TimelineItem(
+        id=str(t.id),
+        title=t.title,
+        notes=t.notes,
+        day=t.day,
+        start_time=t.start_time,
+        duration_minutes=t.duration_minutes,
+        is_all_day=t.is_all_day,
+        completed_at=t.completed_at,
+        color=t.color,
+        symbol=t.symbol,
+        is_occurrence=False,
+        alerts=[{"kind": a.kind, "offset_minutes": a.offset_minutes} for a in (t.alerts or [])],
+    )
+
+
+def _occ_to_item(o) -> TimelineItem:
+    return TimelineItem(
+        id=o.id,
+        title=o.title,
+        notes=o.notes,
+        day=o.day,
+        start_time=o.start_time,
+        duration_minutes=o.duration_minutes,
+        is_all_day=o.is_all_day,
+        completed_at=o.completed_at,
+        color=o.color,
+        symbol=o.symbol,
+        is_occurrence=True,
+        series_id=o.series_id,
+    )
+
+
+async def merge_day(user, db, day: date) -> list[TimelineItem]:
+    tasks = await TaskService(db).list_for_day(user, day)
+    occs = await SeriesService(db).materialize_range(user, day, day)
+    return [_task_to_item(t) for t in tasks] + [_occ_to_item(o) for o in occs]
 
 
 @router.get("/open", response_model=list[TaskRead])
@@ -27,7 +69,7 @@ async def list_open(
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
 ) -> list[TaskRead] | Response:
     tasks = await TaskService(db).list_open(user, before=before)
-    etag = _etag_for(tasks)
+    etag = f'"{len(tasks)}"'
     if if_none_match and if_none_match == etag:
         return Response(status_code=304)
     response.headers["ETag"] = etag
@@ -35,14 +77,14 @@ async def list_open(
 
 
 @router.get("/search", response_model=list[TaskRead])
-async def search_tasks(user: CurrentUser, db: DbSession, q: str) -> list[TaskRead]:
+async def search_tasks_route(user: CurrentUser, db: DbSession, q: str) -> list[TaskRead]:
     from structured_backend.services.search import search_tasks as do_search
 
     tasks = await do_search(db, user, q)
     return [TaskRead.model_validate(t) for t in tasks]
 
 
-@router.get("", response_model=list[TaskRead])
+@router.get("", response_model=list[TimelineItem])
 async def list_tasks(
     user: CurrentUser,
     db: DbSession,
@@ -51,23 +93,24 @@ async def list_tasks(
     day_from: date | None = None,
     day_to: date | None = None,
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-) -> list[TaskRead] | Response:
-    svc = TaskService(db)
+) -> list[TimelineItem] | Response:
     if day is not None:
-        tasks = await svc.list_for_day(user, day)
+        items = await merge_day(user, db, day)
     elif day_from is not None and day_to is not None:
-        tasks = await svc.list_range(user, day_from, day_to)
+        tasks = await TaskService(db).list_range(user, day_from, day_to)
+        occs = await SeriesService(db).materialize_range(user, day_from, day_to)
+        items = [_task_to_item(t) for t in tasks] + [_occ_to_item(o) for o in occs]
     else:
         raise AppError(
             "validation_error",
             "Provide day= or day_from=&day_to=",
             hint="Use /v1/today or /v1/inbox for those views",
         )
-    etag = _etag_for(tasks)
+    etag = _etag_for(items)
     if if_none_match and if_none_match == etag:
         return Response(status_code=304)
     response.headers["ETag"] = etag
-    return [TaskRead.model_validate(t) for t in tasks]
+    return items
 
 
 @router.post("", response_model=TaskRead, status_code=201)

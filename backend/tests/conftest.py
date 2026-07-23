@@ -8,7 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from structured_backend.db.base import Base
 from structured_backend.db.session import get_db
 from structured_backend.main import app as fastapi_app
-from structured_backend.models import Alert, ApiKey, Task, User  # noqa: F401
+from structured_backend.models import (  # noqa: F401
+    Alert,
+    ApiKey,
+    Series,
+    SeriesCompletion,
+    SeriesException,
+    Task,
+    User,
+)
 from structured_backend.services.users import create_user
 
 
