@@ -18,6 +18,8 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     email: Mapped[str | None] = mapped_column(String(320), unique=True, nullable=True)
+    discord_id: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
+    widget_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     day_starts_at: Mapped[time] = mapped_column(Time, nullable=False, default=time(0, 0))
     created_at: Mapped[datetime] = mapped_column(
