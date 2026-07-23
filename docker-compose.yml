@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
     env_file: ./bot/.env
     environment:
-      MCP_URL: http://api:8000/mcp
+      MCP_URL: http://api:8000/mcp/mcp
     depends_on:
       - api
     healthcheck:

@@ -9,7 +9,7 @@ const schema = z.object({
   LLM_BASE_URL: z.string().url().default("https://api.mistral.ai/v1"),
   LLM_MODEL: z.string().default("mistral-small-latest"),
   /** Our backend MCP endpoint (default local). */
-  MCP_URL: z.string().url().default("http://127.0.0.1:8000/mcp"),
+  MCP_URL: z.string().url().default("http://127.0.0.1:8000/mcp/mcp"),
   /** API key from `backend/scripts/create_user.py`. */
   STRUCTURED_API_KEY: z.string().min(1),
   MAX_TOOL_CALLS: z.coerce.number().int().positive().default(20),
