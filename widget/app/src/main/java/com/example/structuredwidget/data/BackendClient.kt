@@ -22,13 +22,16 @@ class BackendClient(
     suspend fun getJsonArray(path: String): JSONArray = withContext(Dispatchers.IO) {
         val base = credentials.getBaseUrl()
             ?: throw IllegalStateException("Base URL not set")
-        val key = credentials.getApiKey()
-            ?: throw IllegalStateException("API key not set")
+        val discordId = credentials.getDiscordId()
+            ?: throw IllegalStateException("Discord ID not set")
+        val token = credentials.getWidgetToken()
+            ?: throw IllegalStateException("Widget token not set")
         val url = "$base$path"
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
-            .header("X-API-Key", key)
+            .header("X-Discord-Id", discordId)
+            .header("X-Widget-Token", token)
             .get()
             .build()
         client.newCall(request).execute().use { response ->

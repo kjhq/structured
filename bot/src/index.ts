@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     console.warn(
-      "MCP unavailable — Discord will still start. Ensure backend is up and STRUCTURED_API_KEY is valid.",
+      "MCP unavailable — Discord will still start. Ensure backend is up and BOT_API_SECRET matches.",
       err instanceof Error ? err.message : err,
     );
   }

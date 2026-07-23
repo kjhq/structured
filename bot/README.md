@@ -1,20 +1,20 @@
 # structured-bot
 
-Discord bot for task management via **our** planner backend (MCP `/mcp` + API key).
+Discord bot for task management via **our** planner backend (MCP `/mcp`).
 
-No Structured.app OAuth. No `structured_token.json`.
+Identity = Discord user ID. Bot proves itself with `BOT_API_SECRET`; each request scopes tools with `X-Discord-Id`.
 
 ## quick start
 
 ```bash
-# backend must be running; create a key:
-cd ../backend && uv run python scripts/create_user.py --timezone Asia/Kolkata --label bot
-
+# backend must be running (BOT_API_SECRET set)
 cd ../bot
-cp .env.example .env   # fill DISCORD_*, LLM_*, STRUCTURED_API_KEY, MCP_URL
+cp .env.example .env   # fill DISCORD_*, LLM_*, AUTHORIZED_USER_IDS, BOT_API_SECRET
 npm install
 npm run dev
 ```
+
+Then in Discord: `/link` → bot DMs Discord ID + widget token for the Android app.
 
 ## environment
 
@@ -24,12 +24,13 @@ npm run dev
 | `LLM_API_KEY` | yes | – | llm provider key |
 | `LLM_BASE_URL` | no | mistral | openai-compatible base |
 | `LLM_MODEL` | no | mistral-small-latest | model |
-| `AUTHORIZED_USER_ID` | yes | – | discord user id |
-| `TIMEZONE` | no | UTC | display / prompt timezone (server also has user TZ) |
-| `MCP_URL` | no | `http://127.0.0.1:8000/mcp` | our backend MCP |
-| `STRUCTURED_API_KEY` | yes | – | `sk_…` from create_user |
+| `AUTHORIZED_USER_IDS` | yes | – | comma-separated Discord snowflakes |
+| `BOT_API_SECRET` | yes | – | must match backend `BOT_API_SECRET` |
+| `API_BASE_URL` | no | `http://127.0.0.1:8000` | REST base for `/v1/bot/link` |
+| `TIMEZONE` | no | UTC | display / default user TZ on link |
+| `MCP_URL` | no | `http://127.0.0.1:8000/mcp/mcp` | our backend MCP |
 
 ## commands
 
-- `/help` `/timezone` `/status` `/clear`
-- any other text → LLM agent + planner tools
+- `/help` `/link` `/relink` `/timezone` `/status` `/clear`
+- any other text → LLM agent + planner tools (scoped to your Discord ID)

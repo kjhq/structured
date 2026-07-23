@@ -19,12 +19,11 @@ async def main():
         await conn.run_sync(Base.metadata.create_all)
 asyncio.run(main())
 "
-uv run python scripts/create_user.py --timezone Asia/Kolkata --label bot
 uv run uvicorn structured_backend.main:app --reload --port 8000
 ```
 
 Docs: http://localhost:8000/docs  
-MCP: http://localhost:8000/mcp (pass `X-API-Key`)
+MCP: http://localhost:8000/mcp/mcp (pass `X-Bot-Secret` + `X-Discord-Id`)
 
 ## Docker (api + postgres)
 
@@ -34,7 +33,11 @@ docker compose up --build -d
 
 ## Auth
 
-`X-API-Key: sk_...` from `scripts/create_user.py`
+| Client | Headers |
+|---|---|
+| Widget / REST | `X-Discord-Id` + `X-Widget-Token` (from Discord `/link`) |
+| Bot / MCP | `X-Bot-Secret` + `X-Discord-Id` |
+| Bot link | `POST /v1/bot/link` with `X-Bot-Secret` → mints widget token |
 
 ## Key routes
 

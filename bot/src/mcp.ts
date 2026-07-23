@@ -5,6 +5,7 @@ import { config } from "./config.js";
 
 let client: Client | null = null;
 let connecting: Promise<Client> | null = null;
+let currentDiscordId: string | null = null;
 
 const TOOLS_TTL_MS = 60 * 60 * 1000;
 let toolsCache: { tools: McpTool[]; fetchedAt: number } | null = null;
@@ -15,8 +16,12 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
+export function setMcpDiscordUserId(id: string | null): void {
+  currentDiscordId = id;
+}
+
 /**
- * Per-request timeout + inject X-API-Key for our backend.
+ * Per-request timeout + bot secret + Discord user for our backend.
  * Do NOT put AbortSignal.timeout() in shared requestInit — that signal
  * fires once from transport creation and aborts every later call.
  */
@@ -26,7 +31,10 @@ const fetchWithAuth: FetchLike = (url, init) => {
     ? AbortSignal.any([init.signal, timeoutSignal])
     : timeoutSignal;
   const headers = new Headers(init?.headers);
-  headers.set("X-API-Key", config.STRUCTURED_API_KEY);
+  headers.set("X-Bot-Secret", config.BOT_API_SECRET);
+  if (currentDiscordId) {
+    headers.set("X-Discord-Id", currentDiscordId);
+  }
   return fetch(url, { ...init, headers, signal });
 };
 
@@ -41,7 +49,7 @@ export async function getMcpClient(): Promise<Client> {
         { fetch: fetchWithAuth },
       );
       const next = new Client(
-        { name: "structured-bot", version: "0.4.0" },
+        { name: "structured-bot", version: "0.5.0" },
         { capabilities: {} },
       );
       await next.connect(transport);

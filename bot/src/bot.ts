@@ -8,7 +8,7 @@ import {
   type Message,
   type TextBasedChannel,
 } from "discord.js";
-import { config } from "./config.js";
+import { config, isAuthorizedUser } from "./config.js";
 import { prompt } from "./agent.js";
 import { clear, historySize } from "./store.js";
 import { enqueue } from "./queue.js";
@@ -57,6 +57,8 @@ const HELP_TEXT =
   '• "what\'s in my inbox?"\n\n' +
   "Commands:\n" +
   "/help — this message\n" +
+  "/link — DM widget credentials (Discord ID + token)\n" +
+  "/relink — rotate widget token and DM the new one\n" +
   "/timezone — configured timezone\n" +
   "/status — model, MCP, history size\n" +
   "/clear — reset conversation history";
@@ -65,6 +67,12 @@ const slashCommands = [
   new SlashCommandBuilder()
     .setName("help")
     .setDescription("Show help and example prompts"),
+  new SlashCommandBuilder()
+    .setName("link")
+    .setDescription("DM widget credentials (Discord ID + token)"),
+  new SlashCommandBuilder()
+    .setName("relink")
+    .setDescription("Rotate widget token and DM the new credentials"),
   new SlashCommandBuilder()
     .setName("timezone")
     .setDescription("Show configured timezone"),
@@ -75,10 +83,6 @@ const slashCommands = [
     .setName("clear")
     .setDescription("Reset conversation history for this channel"),
 ].map((cmd) => cmd.toJSON());
-
-function isAuthorized(userId: string): boolean {
-  return !config.AUTHORIZED_USER_ID || userId === config.AUTHORIZED_USER_ID;
-}
 
 async function unauthorizedReply(
   target: ChatInputCommandInteraction | Message,
@@ -114,10 +118,49 @@ async function handleStatus(channelId: string): Promise<string> {
   ].join("\n");
 }
 
+async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const res = await fetch(`${config.API_BASE_URL.replace(/\/$/, "")}/v1/bot/link`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Bot-Secret": config.BOT_API_SECRET,
+    },
+    body: JSON.stringify({
+      discord_id: interaction.user.id,
+      timezone: config.TIMEZONE,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    await interaction.editReply(
+      `Link failed (${res.status}). ${detail.slice(0, 120)}`.trim(),
+    );
+    return;
+  }
+  const body = (await res.json()) as { discord_id: string; widget_token: string };
+  const dmText =
+    "Structured widget credentials:\n" +
+    `Discord ID: \`${body.discord_id}\`\n` +
+    `Widget token: \`${body.widget_token}\`\n` +
+    "Paste both into the widget with your backend URL.\n" +
+    "Token was rotated — any old token no longer works.";
+  try {
+    await interaction.user.send(dmText);
+    await interaction.editReply("Sent credentials via DM.");
+  } catch {
+    await interaction.editReply(
+      "Could not DM you. Open DMs from server members, then run /link again. " +
+        "Token was still rotated — run /link after enabling DMs.",
+    );
+  }
+}
+
 async function handlePrompt(
   channel: TextBasedChannel,
   channelId: string,
   text: string,
+  discordUserId: string,
 ): Promise<void> {
   await enqueue(channelId, async () => {
     if ("sendTyping" in channel) {
@@ -130,7 +173,7 @@ async function handlePrompt(
     }, 8000);
 
     try {
-      const result = await prompt(text, channelId);
+      const result = await prompt(text, channelId, discordUserId);
       await replySafe(channel, result);
     } catch (err) {
       console.error("prompt failed", err);
@@ -138,7 +181,7 @@ async function handlePrompt(
         err instanceof Error &&
         (err.name === "TimeoutError" ||
           err.message.toLowerCase().includes("timeout"))
-          ? "Request timed out (LLM or Structured MCP). Try again in a moment."
+          ? "Request timed out (LLM or planner MCP). Try again in a moment."
           : "Error processing your request. Try again.";
       if ("send" in channel) {
         await channel
@@ -154,7 +197,7 @@ async function handlePrompt(
 async function handleSlashCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
-  if (!isAuthorized(interaction.user.id)) {
+  if (!isAuthorizedUser(interaction.user.id)) {
     await unauthorizedReply(interaction);
     return;
   }
@@ -164,6 +207,10 @@ async function handleSlashCommand(
   switch (interaction.commandName) {
     case "help":
       await interaction.reply(HELP_TEXT);
+      break;
+    case "link":
+    case "relink":
+      await handleLink(interaction);
       break;
     case "timezone":
       await interaction.reply(
@@ -187,7 +234,7 @@ async function handleSlashCommand(
 async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
   if (!message.content.trim()) return;
-  if (!isAuthorized(message.author.id)) {
+  if (!isAuthorizedUser(message.author.id)) {
     await unauthorizedReply(message);
     return;
   }
@@ -196,7 +243,7 @@ async function handleMessage(message: Message): Promise<void> {
   const channel = message.channel;
   if (!channel.isTextBased()) return;
 
-  await handlePrompt(channel, message.channelId, text);
+  await handlePrompt(channel, message.channelId, text, message.author.id);
 }
 
 export function createBot(): Client {

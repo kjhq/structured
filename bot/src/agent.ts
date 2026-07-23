@@ -1,4 +1,4 @@
-import { getMcpClient, listMcpTools, resetMcpClient } from "./mcp.js";
+import { getMcpClient, listMcpTools, resetMcpClient, setMcpDiscordUserId } from "./mcp.js";
 import { chat, type LLMMessage } from "./llm.js";
 import { config } from "./config.js";
 import { load, push, checkDateReset, trim } from "./store.js";
@@ -94,18 +94,27 @@ function isRetryableTransportError(err: unknown): boolean {
   );
 }
 
-export async function prompt(query: string, channelId?: string): Promise<string> {
+export async function prompt(
+  query: string,
+  channelId: string | undefined,
+  discordUserId: string,
+): Promise<string> {
   checkDateReset();
+  setMcpDiscordUserId(discordUserId);
   try {
-    return await runPrompt(query, channelId);
-  } catch (err) {
-    // Stale MCP session / dead transport — reconnect once and retry.
-    if (isRetryableTransportError(err)) {
-      console.error("prompt transport error, reconnecting once:", err);
-      await resetMcpClient();
+    try {
       return await runPrompt(query, channelId);
+    } catch (err) {
+      // Stale MCP session / dead transport — reconnect once and retry.
+      if (isRetryableTransportError(err)) {
+        console.error("prompt transport error, reconnecting once:", err);
+        await resetMcpClient();
+        return await runPrompt(query, channelId);
+      }
+      throw err;
     }
-    throw err;
+  } finally {
+    setMcpDiscordUserId(null);
   }
 }
 

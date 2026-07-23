@@ -27,12 +27,14 @@ class MainActivity : AppCompatActivity() {
         val authButton = findViewById<Button>(R.id.auth_button)
         val refreshButton = findViewById<Button>(R.id.refresh_button)
         val baseUrlInput = findViewById<EditText>(R.id.base_url_input)
-        val apiKeyInput = findViewById<EditText>(R.id.api_key_input)
+        val discordIdInput = findViewById<EditText>(R.id.discord_id_input)
+        val widgetTokenInput = findViewById<EditText>(R.id.widget_token_input)
 
         baseUrlInput.setText(
             credentials.getBaseUrl() ?: ApiCredentials.DEFAULT_BASE_URL,
         )
-        apiKeyInput.setText(credentials.getApiKey().orEmpty())
+        discordIdInput.setText(credentials.getDiscordId().orEmpty())
+        widgetTokenInput.setText(credentials.getWidgetToken().orEmpty())
 
         syncRefreshWork()
         renderStatus(statusText, authButton)
@@ -42,17 +44,23 @@ class MainActivity : AppCompatActivity() {
                 credentials.clear()
                 WidgetRefreshScheduler.cancel(this)
                 WidgetRefreshScheduler.schedule(this)
-                apiKeyInput.setText("")
+                discordIdInput.setText("")
+                widgetTokenInput.setText("")
                 renderStatus(statusText, authButton)
                 Toast.makeText(this, "Disconnected", Toast.LENGTH_SHORT).show()
             } else {
                 val base = baseUrlInput.text?.toString().orEmpty()
-                val key = apiKeyInput.text?.toString().orEmpty()
-                if (base.isBlank() || key.isBlank()) {
-                    Toast.makeText(this, "Enter base URL and API key", Toast.LENGTH_SHORT).show()
+                val discordId = discordIdInput.text?.toString().orEmpty()
+                val token = widgetTokenInput.text?.toString().orEmpty()
+                if (base.isBlank() || discordId.isBlank() || token.isBlank()) {
+                    Toast.makeText(
+                        this,
+                        "Enter base URL, Discord ID, and widget token",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                     return@setOnClickListener
                 }
-                credentials.save(base, key)
+                credentials.save(base, discordId, token)
                 WidgetRefreshScheduler.schedule(this)
                 renderStatus(statusText, authButton)
                 Toast.makeText(this, "Saved — widgets will refresh every 15 minutes", Toast.LENGTH_LONG)
@@ -78,7 +86,7 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Connected to ${credentials.getBaseUrl()}"
             authButton.text = "Disconnect"
         } else {
-            statusText.text = "Not connected — paste backend URL + API key"
+            statusText.text = "Not connected — paste URL + Discord ID + token from /link"
             authButton.text = "Save & connect"
         }
     }

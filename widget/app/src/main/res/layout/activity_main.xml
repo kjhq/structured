@@ -52,17 +52,27 @@
                 android:id="@+id/base_url_input"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Backend URL (e.g. http://10.0.2.2:8000)"
+                android:hint="Backend URL (e.g. http://10.0.2.2:8003)"
                 android:inputType="textUri"
                 android:textColor="#F2FFFFFF"
                 android:textColorHint="#66FFFFFF"
                 android:layout_marginBottom="8dp" />
 
             <EditText
-                android:id="@+id/api_key_input"
+                android:id="@+id/discord_id_input"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="API key (sk_…)"
+                android:hint="Discord user ID"
+                android:inputType="number"
+                android:textColor="#F2FFFFFF"
+                android:textColorHint="#66FFFFFF"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/widget_token_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Widget token (wt_… from /link)"
                 android:inputType="textPassword"
                 android:textColor="#F2FFFFFF"
                 android:textColorHint="#66FFFFFF"
@@ -89,6 +99,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:lineSpacingExtra="4dp"
-            android:text="1. Run backend + create_user.py\n2. Paste base URL + API key\n3. Long-press home → Widgets → Structured\n4. Tap Refresh widgets now" />
+            android:text="1. Run /link in Discord (bot DMs ID + token)\n2. Paste backend URL + Discord ID + token\n3. Long-press home → Widgets → Structured\n4. Tap Refresh widgets now" />
     </LinearLayout>
 </ScrollView>
