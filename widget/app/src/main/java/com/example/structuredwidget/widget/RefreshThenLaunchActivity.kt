@@ -7,7 +7,9 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.example.structuredwidget.MainActivity
 
+/** Refresh widgets, then open our settings activity (not Structured.app). */
 class RefreshThenLaunchActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,12 +23,11 @@ class RefreshThenLaunchActivity : Activity() {
             ExistingWorkPolicy.REPLACE,
             request,
         )
-        val launchIntent = packageManager.getLaunchIntentForPackage("io.unorderly.structured")
-            ?: Intent(Intent.ACTION_MAIN).apply {
-                setClassName("io.unorderly.structured", "com.structured.MainActivity")
+        startActivity(
+            Intent(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-        startActivity(launchIntent)
+            },
+        )
         finish()
     }
 }
