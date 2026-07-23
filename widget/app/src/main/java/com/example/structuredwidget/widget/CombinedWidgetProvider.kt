@@ -39,8 +39,14 @@ internal fun buildRootViews(context: Context, widgetId: Int): RemoteViews {
     }
     views.setRemoteAdapter(R.id.combined_list, serviceIntent)
 
-    WidgetClickHandler.attachOpenStructuredApp(context, views, R.id.widget_root)
-    WidgetClickHandler.setOpenStructuredAppTemplate(context, views, R.id.combined_list)
+    WidgetClickHandler.attachOpenAppAndRefresh(
+        context,
+        views,
+        R.id.widget_header,
+        R.id.widget_header_title,
+        R.id.widget_header_open,
+    )
+    WidgetClickHandler.setOpenAppAndRefreshTemplate(context, views, R.id.combined_list)
 
     return views
 }

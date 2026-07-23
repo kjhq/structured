@@ -9,7 +9,7 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.example.structuredwidget.MainActivity
 
-/** Refresh widgets, then open our settings activity (not Structured.app). */
+/** Force a widget refresh, then open our MainActivity. */
 class RefreshThenLaunchActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,7 +25,11 @@ class RefreshThenLaunchActivity : Activity() {
         )
         startActivity(
             Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                )
             },
         )
         finish()

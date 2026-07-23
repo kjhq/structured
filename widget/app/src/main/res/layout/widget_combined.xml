@@ -10,6 +10,35 @@
     android:paddingBottom="@dimen/space_12"
     android:background="@drawable/widget_background">
 
+    <!-- Non-ListView chrome so taps always work (collection views eat root clicks). -->
+    <LinearLayout
+        android:id="@+id/widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/widget_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/app_name"
+            android:textColor="#F2FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/widget_header_open"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:padding="4dp"
+            android:contentDescription="@string/refresh_description"
+            android:src="@drawable/ic_refresh"
+            android:scaleType="fitCenter" />
+    </LinearLayout>
+
     <ListView
         android:id="@+id/combined_list"
         android:layout_width="match_parent"

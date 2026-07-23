@@ -9,28 +9,37 @@ import com.example.structuredwidget.widget.RefreshThenLaunchActivity
 
 object WidgetClickHandler {
 
-    fun attachOpenStructuredApp(context: Context, views: RemoteViews, vararg viewIds: Int) {
-        val pi = openAppPendingIntent(context) ?: return
+    /** Open our app and force a widget refresh (header / non-collection views). */
+    fun attachOpenAppAndRefresh(context: Context, views: RemoteViews, vararg viewIds: Int) {
+        val pi = openAppAndRefreshPendingIntent(context, mutable = false) ?: return
         for (id in viewIds) views.setOnClickPendingIntent(id, pi)
     }
 
-    fun attachRefresh(context: Context, views: RemoteViews, vararg viewIds: Int) {
+    fun attachRefreshOnly(context: Context, views: RemoteViews, vararg viewIds: Int) {
         val pi = refreshPendingIntent(context) ?: return
         for (id in viewIds) views.setOnClickPendingIntent(id, pi)
     }
 
-    fun setOpenStructuredAppTemplate(context: Context, views: RemoteViews, listViewId: Int) {
-        val pi = openAppPendingIntent(context) ?: return
+    /** List/collection rows: fill-in intents merge into this template (must be mutable). */
+    fun setOpenAppAndRefreshTemplate(context: Context, views: RemoteViews, listViewId: Int) {
+        val pi = openAppAndRefreshPendingIntent(context, mutable = true) ?: return
         views.setPendingIntentTemplate(listViewId, pi)
     }
 
-    private fun openAppPendingIntent(context: Context): PendingIntent? {
-        val intent = Intent(context, RefreshThenLaunchActivity::class.java)
+    private fun openAppAndRefreshPendingIntent(
+        context: Context,
+        mutable: Boolean,
+    ): PendingIntent? {
+        val intent = Intent(context, RefreshThenLaunchActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val mutability =
+            if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(
             context,
-            1,
+            if (mutable) 11 else 1,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or mutability,
         )
     }
 
@@ -40,7 +49,7 @@ object WidgetClickHandler {
             context,
             2,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
 }

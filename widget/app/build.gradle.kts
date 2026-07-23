@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.structuredwidget"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     val keystorePropsFile = rootProject.file("keystore.properties")
