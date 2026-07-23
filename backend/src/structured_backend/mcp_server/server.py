@@ -57,21 +57,41 @@ _session_factory: contextvars.ContextVar[async_sessionmaker[AsyncSession] | None
 )
 
 
-def set_bot_secret(secret: str | None) -> None:
-    _bot_secret.set(secret)
+def set_bot_secret(secret: str | None) -> contextvars.Token[str | None]:
+    return _bot_secret.set(secret)
 
 
-def set_discord_id(discord_id: str | None) -> None:
-    _discord_id.set(discord_id)
+def set_discord_id(discord_id: str | None) -> contextvars.Token[str | None]:
+    return _discord_id.set(discord_id)
 
 
 def set_session_factory(factory: async_sessionmaker[AsyncSession] | None) -> None:
     _session_factory.set(factory)
 
 
+def _auth_headers_from_mcp_request() -> tuple[str | None, str | None]:
+    """Read bot auth from the HTTP request attached to this MCP message.
+
+    Streamable HTTP runs tools in a session task — BaseHTTPMiddleware
+    contextvars set on the ASGI request are not visible here. FastMCP does
+    attach the Starlette Request to RequestContext.request.
+    """
+    try:
+        ctx = mcp.get_context()
+        req = ctx.request_context.request
+    except Exception:  # noqa: BLE001
+        return None, None
+    if req is None:
+        return None, None
+    return req.headers.get("x-bot-secret"), req.headers.get("x-discord-id")
+
+
 async def _session_and_user():
-    secret = _bot_secret.get()
-    discord_id = _discord_id.get()
+    secret, discord_id = _auth_headers_from_mcp_request()
+    if not secret:
+        secret = _bot_secret.get()
+    if not discord_id:
+        discord_id = _discord_id.get()
     if not secret or secret != settings.bot_api_secret:
         raise AppError("unauthorized", "Invalid bot secret", status_code=401)
     if not discord_id:
