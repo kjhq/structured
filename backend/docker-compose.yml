@@ -15,5 +15,17 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://structured:structured@postgres:5432/structured
+      SECRET_KEY: change-me-in-production
+      CORS_ORIGINS: '["*"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:

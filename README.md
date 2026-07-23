@@ -1,33 +1,31 @@
 # structured
 
-Self-hosted task planner — replaces [Structured](https://structured.app) MCP with our own backend.
-
-## Layout
+Self-hosted task planner — replaces Structured.app MCP.
 
 ```
 structured/
-├── backend/     FastAPI + Postgres — source of truth for tasks
-├── bot/           Discord bot (LLM agent, will talk to backend instead of MCP)
-└── widget/        Android home-screen Day & Week widget (will talk to backend instead of MCP)
+├── backend/   FastAPI + Postgres (+ MCP /mcp)
+├── bot/       Discord bot (migrate off Structured MCP next)
+└── widget/    Android widget (migrate to REST next)
+```
+
+## Backend quick start
+
+```bash
+cd backend
+docker compose up -d postgres
+uv sync --extra dev
+uv run uvicorn structured_backend.main:app --reload --port 8000
+```
+
+Create a user/API key:
+
+```bash
+uv run python scripts/create_user.py --timezone Asia/Kolkata --label bot
 ```
 
 ## Status
 
-- [x] Monorepo assembled from archived projects
-- [ ] Backend API (tasks, inbox, auth)
-- [ ] Bot: swap MCP client → backend REST client
-- [ ] Widget: swap McpClient → backend REST client
-
-## Quick start
-
-```bash
-# backend
-cd backend && docker compose up -d
-uv sync && uv run uvicorn structured_backend.main:app --reload
-
-# bot
-cd bot && npm install && npm run dev
-
-# widget
-cd widget && ./gradlew assembleDebug
-```
+- [x] Backend REST + open backlog + recurrence + MCP tools
+- [ ] Bot: point at our `/mcp`
+- [ ] Widget: REST client

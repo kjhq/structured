@@ -1,3 +1,5 @@
+"""Alembic env — imports all models for metadata."""
+
 import asyncio
 from logging.config import fileConfig
 
@@ -8,7 +10,15 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from structured_backend.config import settings
 from structured_backend.db.base import Base
-from structured_backend.models import ApiKey, Task, User  # noqa: F401
+from structured_backend.models import (  # noqa: F401
+    Alert,
+    ApiKey,
+    Series,
+    SeriesCompletion,
+    SeriesException,
+    Task,
+    User,
+)
 
 config = context.config
 if config.config_file_name is not None:
