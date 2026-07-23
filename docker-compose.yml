@@ -1,0 +1,51 @@
+# Full stack on general: postgres (internal) + api (:8003) + discord bot
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: structured-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: structured
+      POSTGRES_PASSWORD: structured
+      POSTGRES_DB: structured
+    volumes:
+      - structured_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U structured -d structured"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # not published — stock-db already owns host :5432
+
+  api:
+    build: ./backend
+    container_name: structured-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://structured:structured@postgres:5432/structured
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      CORS_ORIGINS: '["*"]'
+    ports:
+      - "127.0.0.1:8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bot:
+    build: ./bot
+    container_name: structured-bot
+    restart: unless-stopped
+    env_file: ./bot/.env
+    environment:
+      MCP_URL: http://api:8000/mcp
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/structured-bot-ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  structured_postgres_data:
