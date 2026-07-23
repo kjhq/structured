@@ -33,3 +33,4 @@ captures/
 # Keystore files (do not commit)
 *.jks
 *.keystore
+keystore.properties
