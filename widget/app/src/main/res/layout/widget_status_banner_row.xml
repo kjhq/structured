@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/row_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="@dimen/space_10"
+    android:paddingBottom="@dimen/space_10"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:background="@drawable/hero_card_background"
+    android:layout_marginTop="@dimen/space_4"
+    android:layout_marginBottom="@dimen/space_4">
+
+    <ImageView
+        android:id="@+id/status_banner_icon"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_marginEnd="10dp"
+        android:src="@drawable/ic_task_sun"
+        android:alpha="0.7" />
+
+    <TextView
+        android:id="@+id/status_banner_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textAppearance="@style/TextAppearance.Widget.Caption"
+        android:textColor="@color/widget_text_secondary"
+        android:maxLines="2" />
+</LinearLayout>

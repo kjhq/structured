@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/row_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="2dp"
+        android:paddingTop="@dimen/space_4"
+        android:paddingBottom="@dimen/space_4">
+
+    <TextView
+        android:id="@+id/week_task_row_time"
+        android:layout_width="52dp"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Widget.Caption"
+        android:maxLines="1"
+        android:fontFamily="sans-serif-medium" />
+
+    <ImageView
+        android:id="@+id/week_task_row_color"
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginStart="0dp"
+        android:layout_marginEnd="6dp"
+        android:src="@drawable/task_color_dot"
+        android:scaleType="center"
+        android:contentDescription="@string/cd_task_color" />
+
+    <ImageView
+        android:id="@+id/week_task_row_icon"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginEnd="8dp" />
+
+    <TextView
+        android:id="@+id/week_task_row_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textAppearance="@style/TextAppearance.Widget.Body"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/week_task_row_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Widget.Badge"
+        android:textSize="10sp"
+        android:visibility="gone"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp" />
+</LinearLayout>

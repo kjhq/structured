@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_bg">#CC0D0D0D</color>
+    <color name="widget_text_primary">#F2FFFFFF</color>
+    <color name="widget_text_secondary">#99FFFFFF</color>
+    <color name="widget_text_muted">#66FFFFFF</color>
+    <color name="widget_hairline">#33FFFFFF</color>
+    <color name="widget_hero_bg">#1AFFFFFF</color>
+
+    <!-- From original APK -->
+    <color name="hairline_dark">#14ffffff</color>
+    <color name="surface_glass_dark">#0fffffff</color>
+    <color name="surface_inner_highlight">#14ffffff</color>
+    <color name="accent_default">#5E96CB</color>
+    <color name="status_now">#26DE81</color>
+    <color name="status_next">#F7B731</color>
+    <color name="status_done">#66FFFFFF</color>
+</resources>

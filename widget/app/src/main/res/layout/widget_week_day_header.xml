@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/row_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/space_10"
+    android:paddingBottom="@dimen/space_2">
+
+        <TextView
+            android:id="@+id/week_day_header_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.Widget.Eyebrow"
+            android:textColor="@color/widget_text_primary"
+            android:maxLines="1"
+            android:ellipsize="end" />
+</LinearLayout>

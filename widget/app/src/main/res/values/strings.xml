@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Structured Widget</string>
+    <string name="widget_name_combined">Planner · Day &amp; Week</string>
+    <string name="widget_description">Today, inbox, and the week ahead — from your backend</string>
+    <string name="widget_description_combined">Today\'s tasks, inbox, and the week ahead</string>
+    <string name="week_free">Free</string>
+    <string name="week_more">+%d more</string>
+    <string name="refresh_description">Refresh widget</string>
+    <string name="cd_task_color">Task color</string>
+    <string name="status_logged_in">Connected — widgets refresh every 15 minutes</string>
+    <string name="status_logged_out">Not connected — showing sample schedule</string>
+    <string name="login_button">Save &amp; connect</string>
+    <string name="logout_button">Disconnect</string>
+</resources>

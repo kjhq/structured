@@ -1,0 +1,7 @@
+node_modules
+*.py
+.venv
+uv.lock
+/tmp
+.git
+.gitignore

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.StructuredWidget" parent="Theme.AppCompat.DayNight.NoActionBar" />
+
+    <style name="TextAppearance.Widget.Display" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">@dimen/text_display</item>
+        <item name="android:textColor">@color/widget_text_primary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="TextAppearance.Widget.H2" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">@dimen/text_h2</item>
+        <item name="android:textColor">@color/widget_text_primary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Body" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">@dimen/text_body</item>
+        <item name="android:textColor">@color/widget_text_primary</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Caption" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">@dimen/text_caption</item>
+        <item name="android:textColor">@color/widget_text_secondary</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Eyebrow" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">@dimen/text_eyebrow</item>
+        <item name="android:textColor">@color/widget_text_secondary</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Badge" parent="TextAppearance.AppCompat">
+        <item name="android:textSize">10sp</item>
+        <item name="android:textColor">@color/widget_text_primary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+</resources>

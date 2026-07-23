@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+structured_token.json
+structured_client.json
+timezones.json
+benchmark_*.json
+*.py
+__pycache__/
+.venv
+bot.log
+.playwright-mcp/
+/.python-version

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0D0D0D"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="28dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#F2FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:layout_marginBottom="8dp"
+            android:text="@string/app_name" />
+
+        <TextView
+            android:textSize="14sp"
+            android:textColor="#99FFFFFF"
+            android:gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="32dp"
+            android:text="Home-screen Day &amp; Week widget for your planner backend" />
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:background="@drawable/hero_card_background"
+            android:padding="20dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:id="@+id/status_text"
+                android:textSize="15sp"
+                android:textColor="#F2FFFFFF"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:text="Checking…" />
+
+            <EditText
+                android:id="@+id/base_url_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Backend URL (e.g. http://10.0.2.2:8000)"
+                android:inputType="textUri"
+                android:textColor="#F2FFFFFF"
+                android:textColorHint="#66FFFFFF"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/api_key_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="API key (sk_…)"
+                android:inputType="textPassword"
+                android:textColor="#F2FFFFFF"
+                android:textColorHint="#66FFFFFF"
+                android:layout_marginBottom="12dp" />
+
+            <Button
+                android:id="@+id/auth_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Save &amp; connect" />
+
+            <Button
+                android:id="@+id/refresh_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Refresh widgets now" />
+        </LinearLayout>
+
+        <TextView
+            android:textSize="13sp"
+            android:textColor="#66FFFFFF"
+            android:gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="4dp"
+            android:text="1. Run backend + create_user.py\n2. Paste base URL + API key\n3. Long-press home → Widgets → Structured\n4. Tap Refresh widgets now" />
+    </LinearLayout>
+</ScrollView>
