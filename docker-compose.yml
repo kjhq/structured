@@ -24,6 +24,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://structured:structured@postgres:5432/structured
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      BOT_API_SECRET: ${BOT_API_SECRET:-change-me-bot-secret}
       CORS_ORIGINS: '["*"]'
     ports:
       - "127.0.0.1:8003:8000"
@@ -38,6 +39,8 @@ services:
     env_file: ./bot/.env
     environment:
       MCP_URL: http://api:8000/mcp/mcp
+      API_BASE_URL: http://api:8000
+      BOT_API_SECRET: ${BOT_API_SECRET:-change-me-bot-secret}
     depends_on:
       - api
     healthcheck:
