@@ -10,27 +10,29 @@ from structured_backend.errors import AppError
 from structured_backend.models.user import User
 from structured_backend.services import users as user_service
 
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+discord_id_header = APIKeyHeader(name="X-Discord-Id", auto_error=False)
+widget_token_header = APIKeyHeader(name="X-Widget-Token", auto_error=False)
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_current_user(
     db: DbSession,
-    key: str | None = Security(api_key_header),
+    discord_id: str | None = Security(discord_id_header),
+    token: str | None = Security(widget_token_header),
 ) -> User:
-    if not key:
+    if not discord_id or not token:
         raise AppError(
             "unauthorized",
-            "Missing API key",
+            "Missing Discord credentials",
             status_code=401,
-            hint="Pass X-API-Key header",
+            hint="Pass X-Discord-Id and X-Widget-Token",
         )
-    user = await user_service.get_user_by_api_key(db, key)
+    user = await user_service.get_user_by_discord_and_token(db, discord_id, token)
     if user is None:
         raise AppError(
             "unauthorized",
-            "Invalid or revoked API key",
+            "Invalid Discord ID or widget token",
             status_code=401,
         )
     return user

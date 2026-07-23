@@ -17,7 +17,7 @@ from structured_backend.models import (  # noqa: F401
     Task,
     User,
 )
-from structured_backend.services.users import create_user
+from structured_backend.services import users as user_service
 
 
 @pytest_asyncio.fixture
@@ -51,8 +51,10 @@ async def app(db_engine):
 
 @pytest_asyncio.fixture
 async def api_headers(db_session: AsyncSession) -> dict[str, str]:
-    _user, raw = await create_user(db_session, timezone="Asia/Kolkata", label="test")
-    return {"X-API-Key": raw}
+    _user, raw = await user_service.link_widget_token(
+        db_session, discord_id="999000111", timezone="Asia/Kolkata"
+    )
+    return {"X-Discord-Id": "999000111", "X-Widget-Token": raw}
 
 
 @pytest_asyncio.fixture
