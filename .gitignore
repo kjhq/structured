@@ -1,0 +1,26 @@
+# bot
+bot/node_modules/
+bot/dist/
+bot/.env
+bot/structured_token.json
+bot/structured_client.json
+
+# widget
+widget/.gradle/
+widget/local.properties
+widget/app/build/
+widget/.kotlin/
+
+# backend
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/*.egg-info/
+backend/uv.lock
+
+# os
+.DS_Store
+*.pyc
