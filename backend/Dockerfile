@@ -2,13 +2,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md uv.lock ./
 COPY src ./src
 COPY scripts ./scripts
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-RUN pip install --no-cache-dir uv && uv pip install --system . \
+# Pin via pyproject (mcp<2); lockfile keeps reproducible resolves when present.
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system . \
     && chmod +x /app/scripts/entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
