@@ -1,19 +1,16 @@
-{
-	# Local/dev: cleartext HTTP to api on :8003 (no TLS cert required).
-	# Production: put real TLS hostnames here and terminate HTTPS.
-	:8003 {
-		# Block MCP on the public listener — bot reaches api:8000 internally.
-		@mcp path /mcp /mcp/*
-		respond @mcp 404
+# Public REST only. MCP stays on the compose network (api:8000).
+# :8003 cleartext for existing clients; :8443 TLS (internal CA) for HTTPS widgets.
 
-		reverse_proxy api:8000
-	}
+:8003 {
+	@mcp path /mcp /mcp/*
+	respond @mcp 404
 
-	# Optional HTTPS listener (self-signed for LAN testing).
-	:8443 {
-		tls internal
-		@mcp path /mcp /mcp/*
-		respond @mcp 404
-		reverse_proxy api:8000
-	}
+	reverse_proxy api:8000
+}
+
+:8443 {
+	tls internal
+	@mcp path /mcp /mcp/*
+	respond @mcp 404
+	reverse_proxy api:8000
 }
