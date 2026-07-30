@@ -165,6 +165,22 @@ class SeriesService:
         series = await self.get(user, series_id)
         if series is None:
             raise AppError("not_found", "Series not found", status_code=404)
+        if not _matches(series, data.occurrence_day):
+            raise AppError(
+                "validation_error",
+                "Day does not match series recurrence",
+                hint="Pick an occurrence day that the rule generates",
+            )
+        existing = next(
+            (
+                e
+                for e in series.exceptions
+                if e.occurrence_day == data.occurrence_day and e.kind == data.kind
+            ),
+            None,
+        )
+        if existing:
+            return series
         exc = SeriesException(
             series_id=series.id,
             occurrence_day=data.occurrence_day,

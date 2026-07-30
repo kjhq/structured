@@ -52,3 +52,29 @@ async def test_weekly_series_materializes_and_skip(client, api_headers):
     aug = await client.get("/v1/tasks", headers=api_headers, params={"day": "2026-08-06"})
     occ2 = next(t for t in aug.json() if t.get("is_occurrence"))
     assert occ2["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_skip_rejects_non_occurrence_day(client, api_headers):
+    r = await client.post(
+        "/v1/series",
+        headers=api_headers,
+        json={
+            "title": "Monthly Slice",
+            "freq": "monthly",
+            "start_day": "2026-07-21",
+            "is_all_day": True,
+        },
+    )
+    assert r.status_code == 201
+    series_id = r.json()["id"]
+
+    bad = await client.post(
+        f"/v1/series/{series_id}/exceptions",
+        headers=api_headers,
+        json={"occurrence_day": "2026-07-22", "kind": "skip"},
+    )
+    assert bad.status_code == 400
+    body = bad.json()
+    assert body["code"] == "validation_error"
+    assert "does not match" in body["message"].lower()
