@@ -53,9 +53,11 @@ function buildSystemPrompt(ctx: UserContext): string {
     "- NEVER say you added/updated/deleted something unless a planner_* tool just returned success for that item. If you did not call a tool, you did nothing.",
     "- If the user asks for a NEW recurring item, call planner_create_series even if another series already falls on that day. Same day can have multiple series.",
     "- move X to Y → find first, then planner_update_task or planner_reschedule",
+    "- finish / done / mark complete / tick / tick off / check off X → find X, then planner_complete_tasks",
     "- every Monday / daily / weekly / Nth of month → planner_create_series (not create_task)",
     "- delete this task → planner_delete_tasks; stop recurring forever → planner_delete_series; skip just today → planner_skip_occurrence",
     "- After every create/update/complete/delete, confirm using the tool result (title + schedule).",
+    "- Tool failures are not user-managed sessions. Never tell the user to activate or restart a planner session/service. If an operation still fails, say only that it could not be completed.",
     "- Never invent day, time, duration. Ask if missing",
     "- remind me to X with no time → inbox (omit day)",
     "- Only use move_open_before_to_today when the user explicitly asks to move leftover tasks to today",
@@ -96,10 +98,30 @@ function isTimeoutError(err: unknown): boolean {
   );
 }
 
-function isRetryableTransportError(err: unknown): boolean {
-  if (isTimeoutError(err)) return true;
+function isStaleMcpSessionError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const e = err as { name?: string; message?: string; constructor?: { name?: string } };
+  const e = err as {
+    message?: string;
+    code?: number;
+  };
+  const msg = (e.message ?? "").toLowerCase();
+  return (
+    e.code === 404 ||
+    e.code === -32001 ||
+    msg.includes("session not found") ||
+    msg.includes("no valid session") ||
+    msg.includes("mcp-session-id")
+  );
+}
+
+function isRetryableTransportError(err: unknown): boolean {
+  if (isTimeoutError(err) || isStaleMcpSessionError(err)) return true;
+  if (!err || typeof err !== "object") return false;
+  const e = err as {
+    name?: string;
+    message?: string;
+    constructor?: { name?: string };
+  };
   const name = e.name ?? e.constructor?.name ?? "";
   const msg = (e.message ?? "").toLowerCase();
   return (
@@ -111,6 +133,53 @@ function isRetryableTransportError(err: unknown): boolean {
     msg.includes("network") ||
     msg.includes("connection")
   );
+}
+
+type McpClient = Awaited<ReturnType<typeof getMcpClient>>;
+
+class ToolCallReconnectFailed extends Error {
+  constructor(readonly original: unknown) {
+    super(
+      `MCP tool call still failed after reconnect: ${
+        original instanceof Error ? original.message : String(original)
+      }`,
+    );
+    this.name = "ToolCallReconnectFailed";
+  }
+}
+
+async function callToolWithSessionRecovery(
+  client: McpClient,
+  discordUserId: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{
+  client: McpClient;
+  result: Awaited<ReturnType<McpClient["callTool"]>>;
+}> {
+  try {
+    return {
+      client,
+      result: await client.callTool({ name, arguments: args }),
+    };
+  } catch (err) {
+    if (!isStaleMcpSessionError(err)) throw err;
+  }
+
+  console.error("stale MCP session, reconnecting before retrying tool call");
+  try {
+    await resetMcpClient(discordUserId);
+    const reconnected = await getMcpClient(discordUserId);
+    return {
+      client: reconnected,
+      result: await reconnected.callTool({ name, arguments: args }),
+    };
+  } catch (err) {
+    if (isRetryableTransportError(err)) {
+      throw new ToolCallReconnectFailed(err);
+    }
+    throw err;
+  }
 }
 
 export async function prompt(
@@ -144,7 +213,7 @@ async function runPrompt(
   channelId: string | undefined,
   userCtx: UserContext,
 ): Promise<string> {
-  const mcp = await getMcpClient(discordUserId);
+  let mcp = await getMcpClient(discordUserId);
   const tools = await listMcpTools(discordUserId);
 
   const key =
@@ -193,19 +262,30 @@ async function runPrompt(
         continue;
       }
       try {
-        const res = await mcp.callTool({
-          name: tc.function.name,
-          arguments: args,
-        });
+        const call = await callToolWithSessionRecovery(
+          mcp,
+          discordUserId,
+          tc.function.name,
+          args,
+        );
+        mcp = call.client;
         messages.push({
           role: "tool",
-          content: truncateToolResult(extractText(res as { content: Array<{ type: string; text?: string }> })),
+          content: truncateToolResult(
+            extractText(
+              call.result as { content: Array<{ type: string; text?: string }> },
+            ),
+          ),
           tool_call_id: tc.id,
         });
       } catch (err) {
+        const toolError =
+          err instanceof ToolCallReconnectFailed ? err.original : err;
         messages.push({
           role: "tool",
-          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          content: `Error: ${
+            toolError instanceof Error ? toolError.message : String(toolError)
+          }`,
           tool_call_id: tc.id,
         });
       }

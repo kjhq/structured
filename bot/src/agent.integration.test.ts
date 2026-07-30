@@ -108,6 +108,8 @@ describe("agent integration", () => {
     await prompt("status?", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
     assert.match(capturedSystem, /Europe\/London/);
     assert.match(capturedSystem, /2026-03-15/);
+    assert.match(capturedSystem, /tick off.*planner_complete_tasks/i);
+    assert.match(capturedSystem, /Never tell the user to.*session/i);
     assert.doesNotMatch(capturedSystem, /UTC.*from their server profile/);
   });
 
@@ -137,6 +139,191 @@ describe("agent integration", () => {
 
     const out = await prompt("find tasks", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
     assert.equal(out, "recovered");
+  });
+
+  it("reconnects and retries when a tool call reports a stale MCP session", async () => {
+    setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+
+    let connections = 0;
+    setMcpClientFactoryForTest(async () => {
+      connections++;
+      const stale = connections === 1;
+      return {
+        connect: async () => {},
+        close: async () => {},
+        listTools: async () => ({
+          tools: [{ name: "planner_find_tasks", inputSchema: { type: "object" } }],
+        }),
+        callTool: async () => {
+          if (stale) {
+            throw new Error("MCP error -32001: Session not found");
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  tasks: [{ task_id: "task-1", title: "Fix up the prompt" }],
+                }),
+              },
+            ],
+          };
+        },
+      } as unknown as Client;
+    });
+
+    setChatImplForTest(async (messages) => {
+      const toolMessage = messages.find((message) => message.role === "tool");
+      if (toolMessage) {
+        assert.match(String(toolMessage.content), /Fix up the prompt/);
+        return { content: "Completed **Fix up the prompt**." };
+      }
+      return {
+        content: null,
+        tool_calls: [
+          {
+            id: "find-task",
+            type: "function",
+            function: {
+              name: "planner_find_tasks",
+              arguments: JSON.stringify({ q: "fix up the prompt" }),
+            },
+          },
+        ],
+      };
+    });
+
+    const out = await prompt(
+      "tick off fix up the prompt",
+      FIXTURE_CHANNEL,
+      FIXTURE_USERS.alice,
+    );
+
+    assert.equal(out, "Completed **Fix up the prompt**.");
+    assert.equal(connections, 2);
+  });
+
+  it("retries only the failed tool call after a stale MCP session", async () => {
+    setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+
+    let connections = 0;
+    let completedCalls = 0;
+    setMcpClientFactoryForTest(async () => {
+      connections++;
+      const stale = connections === 1;
+      return {
+        connect: async () => {},
+        close: async () => {},
+        listTools: async () => ({
+          tools: [
+            { name: "planner_complete_tasks", inputSchema: { type: "object" } },
+            { name: "planner_find_tasks", inputSchema: { type: "object" } },
+          ],
+        }),
+        callTool: async ({ name }: { name: string }) => {
+          if (name === "planner_complete_tasks") {
+            completedCalls++;
+            return { content: [{ type: "text", text: '{"completed":["task-1"]}' }] };
+          }
+          if (stale) {
+            const error = new Error("Streamable HTTP error");
+            Object.assign(error, { code: 404 });
+            throw error;
+          }
+          return { content: [{ type: "text", text: '{"tasks":[]}' }] };
+        },
+      } as unknown as Client;
+    });
+
+    setChatImplForTest(async (messages) => {
+      const toolMessages = messages.filter((message) => message.role === "tool");
+      if (toolMessages.length === 2) return { content: "Done." };
+      return {
+        content: null,
+        tool_calls: [
+          {
+            id: "complete-task",
+            type: "function",
+            function: {
+              name: "planner_complete_tasks",
+              arguments: '{"task_ids":["task-1"]}',
+            },
+          },
+          {
+            id: "refresh-tasks",
+            type: "function",
+            function: { name: "planner_find_tasks", arguments: '{"inbox":true}' },
+          },
+        ],
+      };
+    });
+
+    const out = await prompt("complete and refresh", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
+
+    assert.equal(out, "Done.");
+    assert.equal(connections, 2);
+    assert.equal(completedCalls, 1);
+  });
+
+  it("reports a tool error without replaying mutations when reconnect stays stale", async () => {
+    setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+
+    let connections = 0;
+    let completedCalls = 0;
+    setMcpClientFactoryForTest(async () => {
+      connections++;
+      return {
+        connect: async () => {},
+        close: async () => {},
+        listTools: async () => ({
+          tools: [
+            { name: "planner_complete_tasks", inputSchema: { type: "object" } },
+            { name: "planner_find_tasks", inputSchema: { type: "object" } },
+          ],
+        }),
+        callTool: async ({ name }: { name: string }) => {
+          if (name === "planner_complete_tasks") {
+            completedCalls++;
+            return { content: [{ type: "text", text: '{"completed":["task-1"]}' }] };
+          }
+          const error = new Error("Streamable HTTP error: Session not found");
+          Object.assign(error, { code: 404 });
+          throw error;
+        },
+      } as unknown as Client;
+    });
+
+    setChatImplForTest(async (messages) => {
+      const toolMessages = messages.filter((message) => message.role === "tool");
+      if (toolMessages.length === 2) {
+        assert.match(String(toolMessages[1]?.content), /Session not found/);
+        return { content: "Completed the task, but could not refresh the list." };
+      }
+      return {
+        content: null,
+        tool_calls: [
+          {
+            id: "complete-task",
+            type: "function",
+            function: {
+              name: "planner_complete_tasks",
+              arguments: '{"task_ids":["task-1"]}',
+            },
+          },
+          {
+            id: "refresh-tasks",
+            type: "function",
+            function: { name: "planner_find_tasks", arguments: '{"inbox":true}' },
+          },
+        ],
+      };
+    });
+
+    const out = await prompt("complete and refresh", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
+
+    assert.equal(out, "Completed the task, but could not refresh the list.");
+    assert.equal(connections, 2);
+    assert.equal(completedCalls, 1);
   });
 
   it("clears history when server logical day changes", async () => {
