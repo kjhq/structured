@@ -1,10 +1,12 @@
-# Public REST only. MCP stays on the compose network (api:8000).
-# :8003 cleartext for existing clients; :8443 TLS (internal CA) for HTTPS widgets.
+{
+	# Port-only site addresses conflict with auto HTTPS unless disabled.
+	auto_https off
+}
 
+# Public REST only. MCP stays on the compose network (api:8000).
 :8003 {
 	@mcp path /mcp /mcp/*
 	respond @mcp 404
-
 	reverse_proxy api:8000
 }
 
