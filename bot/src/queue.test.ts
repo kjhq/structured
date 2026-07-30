@@ -1,19 +1,19 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { enqueue } from "./queue.js";
+import { enqueue, queueKey } from "./queue.js";
 
 describe("queue", () => {
-  it("serializes tasks for the same chatId", async () => {
+  it("serializes tasks for the same user+channel", async () => {
     const order: number[] = [];
-    const channelId = "1";
+    const key = queueKey("u1", "1");
 
-    const a = enqueue(channelId, async () => {
+    const a = enqueue(key, async () => {
       order.push(1);
       await new Promise((r) => setTimeout(r, 30));
       order.push(2);
       return "a";
     });
-    const b = enqueue(channelId, async () => {
+    const b = enqueue(key, async () => {
       order.push(3);
       return "b";
     });
@@ -24,18 +24,18 @@ describe("queue", () => {
     assert.deepEqual(order, [1, 2, 3]);
   });
 
-  it("runs different chats in parallel", async () => {
+  it("runs different user+channel keys in parallel", async () => {
     let bothStarted = false;
     let aStarted = false;
     let bStarted = false;
 
-    const a = enqueue("10", async () => {
+    const a = enqueue(queueKey("u1", "10"), async () => {
       aStarted = true;
       await new Promise((r) => setTimeout(r, 40));
       if (bStarted) bothStarted = true;
       return 10;
     });
-    const b = enqueue("20", async () => {
+    const b = enqueue(queueKey("u2", "20"), async () => {
       bStarted = true;
       await new Promise((r) => setTimeout(r, 40));
       if (aStarted) bothStarted = true;
@@ -48,12 +48,37 @@ describe("queue", () => {
     assert.equal(bothStarted, true);
   });
 
+  it("isolates same channel for different users", async () => {
+    let bothStarted = false;
+    let aStarted = false;
+    let bStarted = false;
+    const channel = "shared";
+
+    const a = enqueue(queueKey("u1", channel), async () => {
+      aStarted = true;
+      await new Promise((r) => setTimeout(r, 40));
+      if (bStarted) bothStarted = true;
+      return "a";
+    });
+    const b = enqueue(queueKey("u2", channel), async () => {
+      bStarted = true;
+      await new Promise((r) => setTimeout(r, 40));
+      if (aStarted) bothStarted = true;
+      return "b";
+    });
+
+    const [ra, rb] = await Promise.all([a, b]);
+    assert.equal(ra, "a");
+    assert.equal(rb, "b");
+    assert.equal(bothStarted, true);
+  });
+
   it("continues after a failed task", async () => {
-    const channelId = "3";
-    const first = enqueue(channelId, async () => {
+    const key = queueKey("u1", "3");
+    const first = enqueue(key, async () => {
       throw new Error("boom");
     });
-    const second = enqueue(channelId, async () => "ok");
+    const second = enqueue(key, async () => "ok");
 
     await assert.rejects(first);
     assert.equal(await second, "ok");

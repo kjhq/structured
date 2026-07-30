@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.example.structuredwidget.data.ApiCredentials
 import java.util.concurrent.TimeUnit
 
 object WidgetRefreshScheduler {
@@ -16,9 +17,11 @@ object WidgetRefreshScheduler {
     fun schedule(context: Context) {
         Log.d("WidgetRefreshSched", "schedule() called")
         val wm = WorkManager.getInstance(context)
-        // Network preferred but not required so sample/offline data still loads.
+        val configured = ApiCredentials(context).isConfigured()
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+            .setRequiredNetworkType(
+                if (configured) NetworkType.CONNECTED else NetworkType.NOT_REQUIRED,
+            )
             .build()
 
         val periodic = PeriodicWorkRequestBuilder<WidgetRefreshWorker>(

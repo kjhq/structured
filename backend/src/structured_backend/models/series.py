@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from structured_backend.db.base import Base
@@ -65,6 +65,9 @@ class SeriesException(Base):
 
 class SeriesCompletion(Base):
     __tablename__ = "series_completions"
+    __table_args__ = (
+        UniqueConstraint("series_id", "occurrence_day", name="uq_series_completions_series_day"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     series_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("series.id"), nullable=False, index=True)

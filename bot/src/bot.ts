@@ -10,9 +10,10 @@ import {
 } from "discord.js";
 import { config, isAuthorizedUser } from "./config.js";
 import { prompt } from "./agent.js";
-import { clear, historySize } from "./store.js";
-import { enqueue } from "./queue.js";
+import { clear, historySize, historyKey } from "./store.js";
+import { enqueue, queueKey } from "./queue.js";
 import { getMcpClient, isMcpConnected, listMcpTools } from "./mcp.js";
+import { fetchUserContext } from "./userContext.js";
 
 /** Discord message limit is 2000 chars. */
 const DISCORD_CHUNK = 1900;
@@ -44,6 +45,17 @@ async function replySafe(
       }
     } catch (err) {
       console.error("Failed to send reply chunk", err);
+      try {
+        if ("send" in channel) {
+          await channel.send({
+            content: "(message truncated — send failed)",
+            ...sendOpts,
+          });
+        }
+      } catch {
+        // ignore
+      }
+      break;
     }
   }
 }
@@ -96,64 +108,123 @@ async function unauthorizedReply(
   }
 }
 
-async function handleStatus(channelId: string): Promise<string> {
+async function handleStatus(
+  discordUserId: string,
+  channelId: string,
+): Promise<string> {
   let toolCount = "?";
+  let timezone = config.TIMEZONE;
   try {
-    if (isMcpConnected()) {
-      toolCount = String((await listMcpTools()).length);
+    const ctx = await fetchUserContext(discordUserId);
+    timezone = ctx.timezone;
+    if (isMcpConnected(discordUserId)) {
+      toolCount = String((await listMcpTools(discordUserId)).length);
     } else {
-      await getMcpClient();
-      toolCount = String((await listMcpTools()).length);
+      await getMcpClient(discordUserId);
+      toolCount = String((await listMcpTools(discordUserId)).length);
     }
   } catch {
     toolCount = "error";
   }
+  const key = historyKey(discordUserId, channelId);
   return [
-    `Timezone: ${config.TIMEZONE}`,
+    `Timezone: ${timezone}`,
     `Model: ${config.LLM_MODEL}`,
     `LLM: ${config.LLM_BASE_URL}`,
-    `MCP connected: ${isMcpConnected() ? "yes" : "no"}`,
+    `MCP connected: ${isMcpConnected(discordUserId) ? "yes" : "no"}`,
     `MCP tools: ${toolCount}`,
-    `History messages: ${historySize(channelId)}`,
+    `History messages: ${historySize(key)}`,
   ].join("\n");
 }
 
-async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
-  const res = await fetch(`${config.API_BASE_URL.replace(/\/$/, "")}/v1/bot/link`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Bot-Secret": config.BOT_API_SECRET,
-    },
-    body: JSON.stringify({
-      discord_id: interaction.user.id,
-      timezone: config.TIMEZONE,
-    }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
+  const base = config.API_BASE_URL.replace(/\/$/, "");
+
+  // Two-phase: prepare pending token, DM it, then activate (invalidate old).
+  let prepareRes: Response;
+  try {
+    prepareRes = await fetch(`${base}/v1/bot/link/prepare`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Bot-Secret": config.BOT_API_SECRET,
+      },
+      body: JSON.stringify({
+        discord_id: interaction.user.id,
+        timezone: config.TIMEZONE,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
     await interaction.editReply(
-      `Link failed (${res.status}). ${detail.slice(0, 120)}`.trim(),
+      `Link failed (timeout/network). ${err instanceof Error ? err.message : String(err)}`.slice(
+        0,
+        180,
+      ),
     );
     return;
   }
-  const body = (await res.json()) as { discord_id: string; widget_token: string };
+
+  if (!prepareRes.ok) {
+    const detail = await prepareRes.text().catch(() => "");
+    await interaction.editReply(
+      `Link failed (${prepareRes.status}). ${detail.slice(0, 120)}`.trim(),
+    );
+    return;
+  }
+
+  const body = (await prepareRes.json()) as {
+    discord_id: string;
+    widget_token: string;
+    pending_id: string;
+  };
   const dmText =
     "Structured widget credentials:\n" +
     `Discord ID: \`${body.discord_id}\`\n` +
     `Widget token: \`${body.widget_token}\`\n` +
     "Paste both into the widget with your backend URL.\n" +
-    "Token was rotated — any old token no longer works.";
+    "This token activates only after successful delivery.";
+
   try {
     await interaction.user.send(dmText);
-    await interaction.editReply("Sent credentials via DM.");
   } catch {
     await interaction.editReply(
       "Could not DM you. Open DMs from server members, then run /link again. " +
-        "Token was still rotated — run /link after enabling DMs.",
+        "Your existing widget token was NOT rotated.",
     );
+    return;
   }
+
+  try {
+    const activateRes = await fetch(`${base}/v1/bot/link/activate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Bot-Secret": config.BOT_API_SECRET,
+      },
+      body: JSON.stringify({
+        discord_id: interaction.user.id,
+        pending_id: body.pending_id,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!activateRes.ok) {
+      const detail = await activateRes.text().catch(() => "");
+      await interaction.editReply(
+        `Credentials DMed, but activation failed (${activateRes.status}). ` +
+          `${detail.slice(0, 100)}. Run /link again.`.trim(),
+      );
+      return;
+    }
+  } catch (err) {
+    await interaction.editReply(
+      `Credentials DMed, but activation failed: ${err instanceof Error ? err.message : String(err)}. Run /link again.`,
+    );
+    return;
+  }
+
+  await interaction.editReply("Sent credentials via DM. Old token (if any) is now invalid.");
 }
 
 async function handlePrompt(
@@ -162,7 +233,8 @@ async function handlePrompt(
   text: string,
   discordUserId: string,
 ): Promise<void> {
-  await enqueue(channelId, async () => {
+  const key = queueKey(discordUserId, channelId);
+  await enqueue(key, async () => {
     if ("sendTyping" in channel) {
       channel.sendTyping().catch(() => {});
     }
@@ -203,6 +275,7 @@ async function handleSlashCommand(
   }
 
   const channelId = interaction.channelId;
+  const userId = interaction.user.id;
 
   switch (interaction.commandName) {
     case "help":
@@ -212,18 +285,21 @@ async function handleSlashCommand(
     case "relink":
       await handleLink(interaction);
       break;
-    case "timezone":
+    case "timezone": {
+      const ctx = await fetchUserContext(userId);
       await interaction.reply(
-        `Timezone is \`${config.TIMEZONE}\` (set the \`TIMEZONE\` env var to change).`,
+        `Your server timezone is \`${ctx.timezone}\` (logical today: ${ctx.today}). ` +
+          `Bot default for new users on /link is \`${config.TIMEZONE}\`.`,
       );
       break;
+    }
     case "clear":
-      clear(channelId);
+      clear(historyKey(userId, channelId));
       await interaction.reply("Conversation history cleared.");
       break;
     case "status": {
       await interaction.deferReply();
-      await interaction.editReply(await handleStatus(channelId));
+      await interaction.editReply(await handleStatus(userId, channelId));
       break;
     }
     default:
@@ -247,17 +323,23 @@ async function handleMessage(message: Message): Promise<void> {
 }
 
 export function createBot(): Client {
-  // Message Content is privileged — without portal toggle Discord rejects login.
-  // DMs still carry content without that intent; guild free-text needs it enabled.
+  // Message Content is privileged — enable in Discord Developer Portal or guild NL breaks.
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
     ],
     partials: [Partials.Channel],
   });
 
+  registerBotHandlers(client);
+  return client;
+}
+
+/** Separated for integration tests without Discord login. */
+export function registerBotHandlers(client: Client): void {
   client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}`);
     await readyClient.application.commands.set(slashCommands);
@@ -288,6 +370,8 @@ export function createBot(): Client {
       await message.reply("Something went wrong. Try again.").catch(() => {});
     }
   });
+}
 
-  return client;
+export async function handleMessageForTest(message: Message): Promise<void> {
+  await handleMessage(message);
 }

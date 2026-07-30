@@ -15,4 +15,8 @@
     <color name="status_now">#26DE81</color>
     <color name="status_next">#F7B731</color>
     <color name="status_done">#66FFFFFF</color>
+    <color name="settings_chip_ok">#3326DE81</color>
+    <color name="settings_chip_warn">#33F7B731</color>
+    <color name="settings_chip_error">#33EB3B5A</color>
+    <color name="settings_chip_neutral">#1AFFFFFF</color>
 </resources>

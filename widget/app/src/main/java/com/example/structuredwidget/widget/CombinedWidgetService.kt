@@ -7,31 +7,26 @@ import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.example.structuredwidget.R
-import com.example.structuredwidget.data.ApiCredentials
-import com.example.structuredwidget.data.BackendClient
-import com.example.structuredwidget.data.BackendTaskSource
-import com.example.structuredwidget.data.SampleDataSource
-import com.example.structuredwidget.data.StructuredTaskSource
 import com.example.structuredwidget.data.TaskListItem
-import com.example.structuredwidget.data.TodayRepository
-import com.example.structuredwidget.data.WeekRepository
 import com.example.structuredwidget.widget.common.TimeFormat
 import com.example.structuredwidget.widget.common.WidgetIconLibrary
 import com.example.structuredwidget.widget.common.WidgetTheme
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "CombinedWidgetService"
-private const val CACHE_TTL_MS = 60_000L
-private const val FALLBACK_LOAD_TIMEOUT_MS = 15_000L
 
 class CombinedWidgetService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory =
-        CombinedRemoteViewsFactory(applicationContext)
+    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory {
+        val widgetId = intent.getIntExtra(
+            android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID,
+            android.appwidget.AppWidgetManager.INVALID_APPWIDGET_ID,
+        )
+        return CombinedRemoteViewsFactory(applicationContext, widgetId)
+    }
 }
 
 private class CombinedRemoteViewsFactory(
     private val context: Context,
+    private val widgetId: Int,
 ) : RemoteViewsService.RemoteViewsFactory {
 
     private var rows: List<TaskListItem> = emptyList()
@@ -42,40 +37,24 @@ private class CombinedRemoteViewsFactory(
 
     override fun onDataSetChanged() {
         use24h = android.text.format.DateFormat.is24HourFormat(context)
-        val cached = CombinedDataCache.get()
-        val cacheAge = CombinedDataCache.age()
-        Log.d(TAG, "onDataSetChanged: cached=${cached.size} age=${cacheAge}ms")
-        if (cached.isNotEmpty() && cacheAge < CACHE_TTL_MS) {
-            rows = cached
+        val cache = CombinedDataCache.get()
+        Log.d(TAG, "onDataSetChanged: cache=${cache != null} age=${CombinedDataCache.age()}ms widget=$widgetId")
+        if (cache == null) {
+            rows = emptyList()
             return
         }
-        val credentials = ApiCredentials(context)
-        val source: StructuredTaskSource = if (credentials.isConfigured()) {
-            BackendTaskSource(BackendClient(credentials))
-        } else {
-            SampleDataSource
-        }
-        val newRows = try {
-            runBlocking {
-                withTimeoutOrNull(FALLBACK_LOAD_TIMEOUT_MS) {
-                    val todayState = TodayRepository(source).load()
-                    val weekState = WeekRepository(source).load()
-                    CombinedListFactory(use24h = use24h)
-                        .toRowList(todayState, weekState, context)
-                }
-            }
-        } catch (e: Throwable) {
-            Log.e(TAG, "fallback load failed", e)
-            null
-        }
-        when {
-            newRows != null -> {
-                CombinedDataCache.set(newRows, manual = false)
-                rows = newRows
-            }
-            cached.isNotEmpty() -> rows = cached
-            else -> rows = emptyList()
-        }
+        val compact = WidgetSizeHelper.isCompact(widgetId)
+        rows = CombinedListFactory(
+            use24h = use24h,
+            compact = compact,
+            clock = { cache.logicalDate ?: cache.todayState.logicalDate ?: java.time.LocalDate.now() },
+        ).toRowList(
+            todayState = cache.todayState,
+            weekState = cache.weekState,
+            context = context,
+            displayState = cache.displayState,
+            timezoneMismatch = cache.todayState.timezoneMismatch,
+        )
     }
 
     override fun getCount(): Int = rows.size
@@ -84,11 +63,11 @@ private class CombinedRemoteViewsFactory(
         if (position >= rows.size) return loadingView()
         return when (val row = rows[position]) {
             is TaskListItem.DayHeader -> dayHeaderView(row)
-            is TaskListItem.DayProgress -> dayProgressView(row)
             is TaskListItem.HeroRow -> heroRowView(row)
             is TaskListItem.SectionLabel -> sectionLabelView(row)
             is TaskListItem.TaskRow -> taskRowView(row)
             is TaskListItem.InboxRow -> inboxRowView(row)
+            is TaskListItem.DueRow -> dueRowView(row)
             is TaskListItem.MoreRow -> moreRowView(row.count)
             is TaskListItem.EmptyDay -> emptyRowView()
             is TaskListItem.StatusBanner -> statusBannerView(row)
@@ -96,7 +75,7 @@ private class CombinedRemoteViewsFactory(
     }
 
     override fun getLoadingView(): RemoteViews = loadingView()
-    override fun getViewTypeCount(): Int = 9
+    override fun getViewTypeCount(): Int = 8
     override fun getItemId(position: Int): Long = position.toLong()
     override fun hasStableIds(): Boolean = true
 
@@ -107,7 +86,7 @@ private class CombinedRemoteViewsFactory(
 
     private fun dayHeaderView(h: TaskListItem.DayHeader): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_week_day_header)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.week_day_header_label, h.label)
         v.setTextColor(
             R.id.week_day_header_label,
@@ -116,19 +95,9 @@ private class CombinedRemoteViewsFactory(
         return v
     }
 
-    private fun dayProgressView(p: TaskListItem.DayProgress): RemoteViews {
-        val v = RemoteViews(context.packageName, R.layout.widget_day_progress_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
-        v.setProgressBar(R.id.day_progress_bar, 100, (p.progress * 100).toInt().coerceIn(0, 100), false)
-        v.setTextViewText(R.id.day_progress_start, p.startLabel)
-        v.setTextViewText(R.id.day_progress_now, "NOW · ${p.nowLabel}")
-        v.setTextViewText(R.id.day_progress_end, p.endLabel)
-        return v
-    }
-
     private fun heroRowView(r: TaskListItem.HeroRow): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_combined_hero_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setImageViewResource(R.id.combined_hero_icon, WidgetIconLibrary.iconResFor(r.task.symbol))
         v.setInt(R.id.combined_hero_icon, "setColorFilter", r.accent)
         v.setTextViewText(R.id.combined_hero_title, r.task.title)
@@ -157,14 +126,14 @@ private class CombinedRemoteViewsFactory(
 
     private fun sectionLabelView(s: TaskListItem.SectionLabel): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_combined_section_label)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.combined_section_label, s.label)
         return v
     }
 
     private fun taskRowView(r: TaskListItem.TaskRow): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_week_task_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         val t = r.task
         val timeText = when {
             t.isAllDay -> "all day"
@@ -175,9 +144,11 @@ private class CombinedRemoteViewsFactory(
         v.setImageViewResource(R.id.week_task_row_icon, WidgetIconLibrary.iconResFor(t.symbol))
 
         val accent = WidgetTheme.parseColor(t.color)
-        v.setInt(R.id.week_task_row_color, "setColorFilter", accent)
-        v.setInt(R.id.week_task_row_icon, "setColorFilter",
-            if (r.isPast) WidgetTheme.TEXT_MUTED else WidgetTheme.TEXT_SECONDARY)
+        v.setInt(
+            R.id.week_task_row_icon,
+            "setColorFilter",
+            if (r.isPast) WidgetTheme.TEXT_MUTED else accent,
+        )
 
         val titleColor = when {
             r.isPast -> WidgetTheme.TEXT_MUTED
@@ -203,7 +174,7 @@ private class CombinedRemoteViewsFactory(
 
     private fun inboxRowView(r: TaskListItem.InboxRow): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_combined_inbox_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.combined_inbox_row_title, r.task.title)
         v.setTextColor(R.id.combined_inbox_row_title, WidgetTheme.TEXT_PRIMARY)
         v.setImageViewResource(
@@ -211,35 +182,60 @@ private class CombinedRemoteViewsFactory(
             WidgetIconLibrary.iconResFor(r.task.symbol),
         )
         v.setInt(
-            R.id.combined_inbox_color,
+            R.id.combined_inbox_icon,
             "setColorFilter",
             WidgetTheme.parseColor(r.task.color),
         )
         return v
     }
 
+    private fun dueRowView(r: TaskListItem.DueRow): RemoteViews {
+        val v = RemoteViews(context.packageName, R.layout.widget_week_task_row)
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
+        val t = r.task
+        v.setTextViewText(R.id.week_task_row_time, r.dayLabel)
+        v.setTextColor(R.id.week_task_row_time, WidgetTheme.TEXT_MUTED)
+        v.setImageViewResource(R.id.week_task_row_icon, WidgetIconLibrary.iconResFor(t.symbol))
+        v.setInt(
+            R.id.week_task_row_icon,
+            "setColorFilter",
+            WidgetTheme.parseColor(t.color),
+        )
+        v.setTextViewText(R.id.week_task_row_title, t.title)
+        v.setTextColor(R.id.week_task_row_title, WidgetTheme.TEXT_PRIMARY)
+        if (r.timeLabel != null) {
+            v.setViewVisibility(R.id.week_task_row_badge, View.VISIBLE)
+            v.setTextViewText(R.id.week_task_row_badge, r.timeLabel)
+            v.setTextColor(R.id.week_task_row_badge, WidgetTheme.TEXT_SECONDARY)
+        } else {
+            v.setViewVisibility(R.id.week_task_row_badge, View.GONE)
+        }
+        return v
+    }
+
     private fun moreRowView(count: Int): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_week_more_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.week_more_row_label, context.getString(R.string.week_more, count))
         return v
     }
 
     private fun emptyRowView(): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_week_empty_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.week_empty_row_label, context.getString(R.string.week_free))
         return v
     }
 
     private fun statusBannerView(b: TaskListItem.StatusBanner): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_status_banner_row)
-        v.setOnClickFillInIntent(R.id.row_root, Intent())
+        v.setOnClickFillInIntent(R.id.row_root, android.content.Intent())
         v.setTextViewText(R.id.status_banner_text, b.message)
         val icon = when (b.kind) {
             TaskListItem.StatusBanner.Kind.EMPTY -> R.drawable.ic_task_sun
             TaskListItem.StatusBanner.Kind.ERROR -> R.drawable.ic_task_error
             TaskListItem.StatusBanner.Kind.INFO -> R.drawable.ic_task_clock
+            TaskListItem.StatusBanner.Kind.WARNING -> R.drawable.ic_task_alarm
         }
         v.setImageViewResource(R.id.status_banner_icon, icon)
         return v

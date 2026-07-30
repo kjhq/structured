@@ -7,4 +7,5 @@ interface StructuredTaskSource {
     suspend fun fetchRecurringTasks(): List<StructuredTask>
     suspend fun fetchInboxTasks(): List<StructuredTask>
     suspend fun fetchForwardTasks(startDate: LocalDate, endDate: LocalDate): List<StructuredTask>
+    suspend fun fetchOpenTasks(): List<StructuredTask>
 }

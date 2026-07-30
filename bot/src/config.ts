@@ -8,7 +8,7 @@ const schema = z.object({
   AUTHORIZED_USER_IDS: z.string().min(1),
   TIMEZONE: z.string().default("UTC"),
   LLM_BASE_URL: z.string().url().default("https://api.mistral.ai/v1"),
-  LLM_MODEL: z.string().default("mistral-small-latest"),
+  LLM_MODEL: z.string().default("mistral-medium-latest"),
   /** Our backend MCP endpoint (default local). */
   MCP_URL: z.string().url().default("http://127.0.0.1:8000/mcp/mcp"),
   /** REST base for /v1/bot/link (no trailing slash). */

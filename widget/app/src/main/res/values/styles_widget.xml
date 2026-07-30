@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.StructuredWidget" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <style name="Theme.StructuredWidget" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/accent_default</item>
+        <item name="colorOnPrimary">@color/widget_text_primary</item>
+        <item name="colorSurface">#141414</item>
+        <item name="colorOnSurface">@color/widget_text_primary</item>
+        <item name="android:statusBarColor">#0D0D0D</item>
+        <item name="android:navigationBarColor">#0D0D0D</item>
+        <item name="android:windowBackground">#0D0D0D</item>
+    </style>
 
     <style name="TextAppearance.Widget.Display" parent="TextAppearance.AppCompat">
         <item name="android:textSize">@dimen/text_display</item>
@@ -37,5 +45,12 @@
         <item name="android:textColor">@color/widget_text_primary</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <style name="Widget.Structured.Card" parent="Widget.Material3.CardView.Elevated">
+        <item name="cardBackgroundColor">@color/surface_glass_dark</item>
+        <item name="cardCornerRadius">@dimen/radius_card</item>
+        <item name="strokeColor">@color/hairline_dark</item>
+        <item name="strokeWidth">@dimen/hairline_thickness</item>
     </style>
 </resources>

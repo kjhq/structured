@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalTime
@@ -93,6 +94,45 @@ class WidgetRefreshWorkerTest {
         }
         assertNotNull("expected exception to propagate", caught)
     }
+
+    @Test
+    fun `refresh passes open tasks to TodayState due`() = runBlocking {
+        val overdue = task("d1", "Overdue", day = "2026-07-04", startTime = 9.0, duration = 30)
+        val src = FakeSource(openTasks = listOf(overdue))
+        val updater = RecordingUpdater()
+        WidgetRefreshWorker.refresh(
+            source = src, clock = { today }, nowProvider = { now }, updater = updater,
+        )
+        val due = updater.combinedToday!!.due
+        assertEquals(1, due.size)
+        assertEquals("Overdue", due[0].title)
+    }
+
+    @Test
+    fun `refresh excludes completed open tasks defensively`() = runBlocking {
+        val overdue = task("d1", "Done", day = "2026-07-04").copy(completedAt = "2026-07-05T10:00:00Z")
+        val src = FakeSource(openTasks = listOf(overdue))
+        val updater = RecordingUpdater()
+        WidgetRefreshWorker.refresh(
+            source = src, clock = { today }, nowProvider = { now }, updater = updater,
+        )
+        assertTrue(updater.combinedToday!!.due.isEmpty())
+    }
+
+    @Test
+    fun `refresh propagates fetchOpenTasks failures`() = runBlocking {
+        val src = OpenThrowingSource()
+        val updater = RecordingUpdater()
+        var caught: Throwable? = null
+        try {
+            WidgetRefreshWorker.refresh(
+                source = src, clock = { today }, nowProvider = { now }, updater = updater,
+            )
+        } catch (e: Throwable) {
+            caught = e
+        }
+        assertNotNull("expected exception to propagate", caught)
+    }
 }
 
 private class FakeSource(
@@ -100,11 +140,13 @@ private class FakeSource(
     val inbox: List<StructuredTask> = emptyList(),
     val forward: List<StructuredTask> = emptyList(),
     val recurring: List<StructuredTask> = emptyList(),
+    val openTasks: List<StructuredTask> = emptyList(),
 ) : StructuredTaskSource {
     override suspend fun fetchOneOffTasks(date: LocalDate): List<StructuredTask> = oneOffForToday
     override suspend fun fetchRecurringTasks(): List<StructuredTask> = recurring
     override suspend fun fetchInboxTasks(): List<StructuredTask> = inbox
     override suspend fun fetchForwardTasks(startDate: LocalDate, endDate: LocalDate): List<StructuredTask> = forward
+    override suspend fun fetchOpenTasks(): List<StructuredTask> = openTasks
 }
 
 private class ThrowingSource : StructuredTaskSource {
@@ -114,6 +156,17 @@ private class ThrowingSource : StructuredTaskSource {
     override suspend fun fetchRecurringTasks(): List<StructuredTask> = emptyList()
     override suspend fun fetchInboxTasks(): List<StructuredTask> = emptyList()
     override suspend fun fetchForwardTasks(startDate: LocalDate, endDate: LocalDate): List<StructuredTask> = emptyList()
+    override suspend fun fetchOpenTasks(): List<StructuredTask> = emptyList()
+}
+
+private class OpenThrowingSource : StructuredTaskSource {
+    override suspend fun fetchOneOffTasks(date: LocalDate): List<StructuredTask> = emptyList()
+    override suspend fun fetchRecurringTasks(): List<StructuredTask> = emptyList()
+    override suspend fun fetchInboxTasks(): List<StructuredTask> = emptyList()
+    override suspend fun fetchForwardTasks(startDate: LocalDate, endDate: LocalDate): List<StructuredTask> = emptyList()
+    override suspend fun fetchOpenTasks(): List<StructuredTask> {
+        throw RuntimeException("open backlog down")
+    }
 }
 
 private class RecordingUpdater : WidgetUpdater {

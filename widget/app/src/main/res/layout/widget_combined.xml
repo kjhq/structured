@@ -6,37 +6,62 @@
     android:orientation="vertical"
     android:paddingStart="@dimen/widget_padding_h"
     android:paddingEnd="@dimen/widget_padding_h"
-    android:paddingTop="@dimen/space_12"
-    android:paddingBottom="@dimen/space_12"
+    android:paddingTop="@dimen/widget_padding_v"
+    android:paddingBottom="@dimen/widget_padding_v"
     android:background="@drawable/widget_background">
 
-    <!-- Non-ListView chrome so taps always work (collection views eat root clicks). -->
     <LinearLayout
         android:id="@+id/widget_header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingBottom="8dp">
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/space_4">
 
-        <TextView
-            android:id="@+id/widget_header_title"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/app_name"
-            android:textColor="#F2FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-        <ImageView
-            android:id="@+id/widget_header_open"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:padding="4dp"
-            android:contentDescription="@string/refresh_description"
-            android:src="@drawable/ic_refresh"
-            android:scaleType="fitCenter" />
+            <TextView
+                android:id="@+id/widget_header_date"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/TextAppearance.Widget.Eyebrow"
+                android:textColor="@color/widget_text_primary"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="TODAY" />
+
+            <TextView
+                android:id="@+id/widget_header_meta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/space_6"
+                android:textAppearance="@style/TextAppearance.Widget.Caption"
+                android:maxLines="1"
+                android:text="" />
+
+            <ImageView
+                android:id="@+id/widget_header_open"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:padding="2dp"
+                android:contentDescription="@string/refresh_description"
+                android:src="@drawable/ic_refresh"
+                android:scaleType="fitCenter" />
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/widget_header_day_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_header_progress_h"
+            android:layout_marginTop="@dimen/space_4"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/day_progress_drawable" />
     </LinearLayout>
 
     <ListView
@@ -47,6 +72,6 @@
         android:divider="@null"
         android:dividerHeight="0dp"
         android:scrollbars="none"
-        android:paddingBottom="8dp"
+        android:paddingBottom="@dimen/space_4"
         android:clipToPadding="false" />
 </LinearLayout>

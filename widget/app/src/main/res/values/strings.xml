@@ -12,4 +12,27 @@
     <string name="status_logged_out">Not connected — showing sample schedule</string>
     <string name="login_button">Save &amp; connect</string>
     <string name="logout_button">Disconnect</string>
+    <string name="settings_subtitle">Connect your planner backend for live home-screen widgets</string>
+    <string name="status_chip_not_configured">Not configured</string>
+    <string name="status_chip_untested">Saved — test connection</string>
+    <string name="status_chip_ok">Connected</string>
+    <string name="status_chip_failing">Connection issue</string>
+    <string name="label_backend_url">Backend URL</string>
+    <string name="label_discord_id">Discord user ID</string>
+    <string name="label_widget_token">Widget token</string>
+    <string name="helper_backend_url">e.g. http://HOST:8003</string>
+    <string name="helper_widget_token">From Discord /link (wt_…)</string>
+    <string name="action_save">Save</string>
+    <string name="action_test">Test connection</string>
+    <string name="action_refresh_widgets">Refresh widgets</string>
+    <string name="action_clear_credentials">Clear credentials</string>
+    <string name="action_copy_log">Copy log</string>
+    <string name="action_show_log">Show log</string>
+    <string name="action_hide_log">Hide log</string>
+    <string name="setup_steps">1. Discord /link → copy ID + token\n2. Save credentials\n3. Test connection\n4. Add widget: Planner · Day &amp; Week</string>
+    <string name="banner_demo">Sample schedule — connect in app for live data</string>
+    <string name="banner_stale">Data may be outdated — last refresh was a while ago</string>
+    <string name="banner_offline">Offline — showing last known schedule</string>
+    <string name="banner_relink">Session expired — re-link in Discord (/link)</string>
+    <string name="banner_timezone_mismatch">Timezone differs from server — times may be off</string>
 </resources>

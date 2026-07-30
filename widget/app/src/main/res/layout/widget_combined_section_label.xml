@@ -3,34 +3,21 @@
     android:id="@+id/row_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:paddingTop="@dimen/space_14"
-    android:paddingBottom="@dimen/space_4">
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="@dimen/space_10"
+    android:paddingBottom="@dimen/space_2">
 
-    <LinearLayout
-        android:layout_width="match_parent"
+    <TextView
+        android:id="@+id/combined_section_label"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
-
-        <TextView
-            android:id="@+id/combined_section_label"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textAppearance="@style/TextAppearance.Widget.Eyebrow" />
-
-        <ImageView
-            android:layout_width="12dp"
-            android:layout_height="12dp"
-            android:src="@drawable/ic_section_chevron"
-            android:alpha="0.4"
-            android:contentDescription="@string/cd_task_color" />
-    </LinearLayout>
+        android:textAppearance="@style/TextAppearance.Widget.Eyebrow"
+        android:paddingEnd="@dimen/space_8" />
 
     <FrameLayout
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="@dimen/hairline_thickness"
-        android:layout_marginTop="@dimen/space_6"
+        android:layout_weight="1"
         android:background="@color/hairline_dark" />
 </LinearLayout>

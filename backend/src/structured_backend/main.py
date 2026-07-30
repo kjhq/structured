@@ -38,38 +38,46 @@ class BotAuthASGIMiddleware:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Required for FastMCP streamable HTTP when mounted under FastAPI.
-    async with mcp.session_manager.run():
+    if settings.enable_mcp:
+        async with mcp.session_manager.run():
+            yield
+    else:
         yield
 
 
-def create_app() -> FastAPI:
+def create_app(*, enable_mcp: bool | None = None) -> FastAPI:
+    mount_mcp = settings.enable_mcp if enable_mcp is None else enable_mcp
     app = FastAPI(
         title="Structured Backend",
         version="0.1.0",
         description="Self-hosted task planner API",
-        lifespan=lifespan,
+        lifespan=lifespan if mount_mcp else None,
     )
     app.add_exception_handler(AppError, app_error_handler)
+    # Never pair Access-Control-Allow-Origin: * with credentials.
+    star_cors = "*" in settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origins=["*"] if star_cors else settings.cors_origins,
+        allow_credentials=not star_cors,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.add_middleware(BotAuthASGIMiddleware)
     app.include_router(api_router)
 
-    app.mount("/mcp", mcp.streamable_http_app())
+    if mount_mcp:
+        app.mount("/mcp", mcp.streamable_http_app())
 
     @app.get("/")
     async def root() -> dict[str, str]:
-        return {
+        out = {
             "service": "structured-backend",
             "docs": "/docs",
-            "mcp": "/mcp/mcp",
         }
+        if mount_mcp:
+            out["mcp"] = "/mcp/mcp"
+        return out
 
     return app
 

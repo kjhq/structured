@@ -4,7 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Response
 
 from structured_backend.api.deps import CurrentUser, DbSession
+from structured_backend.config import settings
 from structured_backend.errors import AppError
+from structured_backend.etag import content_etag
 from structured_backend.schemas.task import TaskCreate, TaskRead, TaskUpdate
 from structured_backend.schemas.timeline import TimelineItem
 from structured_backend.services.series import SeriesService
@@ -13,11 +15,45 @@ from structured_backend.services.tasks import TaskService
 router = APIRouter()
 
 
+def _etag_for_timeline(items: list[TimelineItem]) -> str:
+    parts: list[str | None] = []
+    for item in sorted(items, key=lambda i: i.id):
+        parts.extend(
+            [
+                item.id,
+                item.title,
+                str(item.day) if item.day else None,
+                str(item.start_time) if item.start_time else None,
+                str(item.completed_at) if item.completed_at else None,
+                str(item.is_occurrence),
+                str(item.series_id) if item.series_id else None,
+            ]
+        )
+    return content_etag(parts)
+
+
+def _etag_for_tasks(tasks: list) -> str:
+    parts: list[str | None] = []
+    for t in sorted(tasks, key=lambda x: str(x.id)):
+        parts.extend(
+            [
+                str(t.id),
+                t.title,
+                str(t.day) if t.day else None,
+                str(t.completed_at) if t.completed_at else None,
+                str(t.updated_at),
+                t.client_request_id,
+            ]
+        )
+    return content_etag(parts)
+
+
 def _etag_for(items: list) -> str:
     if not items:
         return '"empty"'
-    stamp = f"{len(items)}-{items[0].id}"
-    return f'"{stamp}"'
+    if isinstance(items[0], TimelineItem):
+        return _etag_for_timeline(items)
+    return _etag_for_tasks(items)
 
 
 def _task_to_item(t) -> TimelineItem:
@@ -69,7 +105,7 @@ async def list_open(
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
 ) -> list[TaskRead] | Response:
     tasks = await TaskService(db).list_open(user, before=before)
-    etag = f'"{len(tasks)}"'
+    etag = _etag_for_tasks(tasks)
     if if_none_match and if_none_match == etag:
         return Response(status_code=304)
     response.headers["ETag"] = etag
@@ -97,6 +133,15 @@ async def list_tasks(
     if day is not None:
         items = await merge_day(user, db, day)
     elif day_from is not None and day_to is not None:
+        span = (day_to - day_from).days + 1
+        if day_to < day_from:
+            raise AppError("validation_error", "day_to must be >= day_from")
+        if span > settings.max_range_days:
+            raise AppError(
+                "validation_error",
+                f"Date range exceeds {settings.max_range_days} days",
+                hint=f"Request at most {settings.max_range_days} days at a time",
+            )
         tasks = await TaskService(db).list_range(user, day_from, day_to)
         occs = await SeriesService(db).materialize_range(user, day_from, day_to)
         items = [_task_to_item(t) for t in tasks] + [_occ_to_item(o) for o in occs]

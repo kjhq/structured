@@ -43,6 +43,17 @@ object SampleData {
         task("i3", "Order new charger", null, null, 0, isInInbox = true, color = "#26C6DA", symbol = "bag"),
     )
 
+    fun overdue(): List<StructuredTask> {
+        val today = LocalDate.now()
+        val yesterday = today.minusDays(1).toString()
+        val twoDaysAgo = today.minusDays(2).toString()
+        return listOf(
+            task("d1", "Finish report", yesterday, 14.0, 60, color = "#EB3B5A", symbol = "pencil"),
+            task("d2", "Call dentist", yesterday, null, 0, isAllDay = true, color = "#FC5C65", symbol = "alarm.fill"),
+            task("d3", "Review PR", twoDaysAgo, 10.0, 30, color = "#5E96CB", symbol = "text.badge.checkmark"),
+        )
+    }
+
     private fun task(
         id: String,
         title: String,
@@ -90,4 +101,6 @@ object SampleDataSource : StructuredTaskSource {
             }
         }
     }
+
+    override suspend fun fetchOpenTasks(): List<StructuredTask> = SampleData.overdue()
 }

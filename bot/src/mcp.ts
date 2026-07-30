@@ -3,9 +3,14 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { config } from "./config.js";
 
-let client: Client | null = null;
-let connecting: Promise<Client> | null = null;
-let currentDiscordId: string | null = null;
+type Session = {
+  client: Client;
+  connecting: Promise<Client> | null;
+  inFlight: number;
+};
+
+/** One MCP session per Discord user — identity headers are immutable per session. */
+const sessions = new Map<string, Session>();
 
 const TOOLS_TTL_MS = 60 * 60 * 1000;
 let toolsCache: { tools: McpTool[]; fetchedAt: number } | null = null;
@@ -16,61 +21,112 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
-export function setMcpDiscordUserId(id: string | null): void {
-  currentDiscordId = id;
+function fetchForUser(discordUserId: string): FetchLike {
+  return (url, init) => {
+    const timeoutSignal = AbortSignal.timeout(config.MCP_TIMEOUT_MS);
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal;
+    const headers = new Headers(init?.headers);
+    headers.set("X-Bot-Secret", config.BOT_API_SECRET);
+    headers.set("X-Discord-Id", discordUserId);
+    return fetch(url, { ...init, headers, signal });
+  };
 }
 
-/**
- * Per-request timeout + bot secret + Discord user for our backend.
- * Do NOT put AbortSignal.timeout() in shared requestInit — that signal
- * fires once from transport creation and aborts every later call.
- */
-const fetchWithAuth: FetchLike = (url, init) => {
-  const timeoutSignal = AbortSignal.timeout(config.MCP_TIMEOUT_MS);
-  const signal = init?.signal
-    ? AbortSignal.any([init.signal, timeoutSignal])
-    : timeoutSignal;
-  const headers = new Headers(init?.headers);
-  headers.set("X-Bot-Secret", config.BOT_API_SECRET);
-  if (currentDiscordId) {
-    headers.set("X-Discord-Id", currentDiscordId);
+type ClientFactory = (discordUserId: string) => Promise<Client>;
+let clientFactory: ClientFactory | null = null;
+
+/** Test hook — inject mock MCP clients per user. */
+export function setMcpClientFactoryForTest(factory: ClientFactory | null): void {
+  clientFactory = factory;
+}
+
+/** Test hook — authenticated fetch with per-user Discord header. */
+export function createAuthenticatedFetch(discordUserId: string): FetchLike {
+  return fetchForUser(discordUserId);
+}
+
+/** Test hook — reset all sessions and tool cache. */
+export async function resetAllMcpSessionsForTest(): Promise<void> {
+  const ids = [...sessions.keys()];
+  toolsCache = null;
+  for (const id of ids) {
+    await resetMcpClient(id);
   }
-  return fetch(url, { ...init, headers, signal });
-};
+  sessions.clear();
+}
 
-export async function getMcpClient(): Promise<Client> {
-  if (client) return client;
-  if (connecting) return connecting;
+/** Test hook — list active session user ids. */
+export function listMcpSessionUserIdsForTest(): string[] {
+  return [...sessions.keys()];
+}
 
-  connecting = (async () => {
+async function connectUser(discordUserId: string): Promise<Client> {
+  const existing = sessions.get(discordUserId);
+  if (existing?.client) return existing.client;
+  if (existing?.connecting) return existing.connecting;
+
+  const slot: Session = {
+    client: null as unknown as Client,
+    connecting: null,
+    inFlight: existing?.inFlight ?? 0,
+  };
+  sessions.set(discordUserId, slot);
+
+  slot.connecting = (async () => {
     try {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(config.MCP_URL),
-        { fetch: fetchWithAuth },
-      );
-      const next = new Client(
-        { name: "structured-bot", version: "0.5.0" },
-        { capabilities: {} },
-      );
-      await next.connect(transport);
-      client = next;
+      let next: Client;
+      if (clientFactory) {
+        next = await clientFactory(discordUserId);
+      } else {
+        const transport = new StreamableHTTPClientTransport(
+          new URL(config.MCP_URL),
+          { fetch: fetchForUser(discordUserId) },
+        );
+        const client = new Client(
+          { name: "structured-bot", version: "0.5.0" },
+          { capabilities: {} },
+        );
+        await client.connect(transport);
+        next = client;
+      }
+      slot.client = next;
       return next;
     } catch (err) {
-      client = null;
+      sessions.delete(discordUserId);
       throw err;
     } finally {
-      connecting = null;
+      const current = sessions.get(discordUserId);
+      if (current) current.connecting = null;
     }
   })();
 
-  return connecting;
+  return slot.connecting;
 }
 
-export function isMcpConnected(): boolean {
-  return client !== null;
+export async function getMcpClient(discordUserId: string): Promise<Client> {
+  if (!discordUserId) {
+    throw new Error("discordUserId required for MCP client");
+  }
+  return connectUser(discordUserId);
 }
 
-export async function listMcpTools(force = false): Promise<McpTool[]> {
+export function isMcpConnected(discordUserId?: string): boolean {
+  if (discordUserId) {
+    const s = sessions.get(discordUserId);
+    return Boolean(s?.client && !s.connecting);
+  }
+  for (const s of sessions.values()) {
+    if (s.client && !s.connecting) return true;
+  }
+  return false;
+}
+
+export async function listMcpTools(
+  discordUserId: string,
+  force = false,
+): Promise<McpTool[]> {
   if (
     !force &&
     toolsCache &&
@@ -78,7 +134,7 @@ export async function listMcpTools(force = false): Promise<McpTool[]> {
   ) {
     return toolsCache.tools;
   }
-  const mcp = await getMcpClient();
+  const mcp = await getMcpClient(discordUserId);
   const toolsResponse = await mcp.listTools();
   const tools: McpTool[] = (toolsResponse.tools ?? []).map((t) => ({
     name: t.name,
@@ -92,16 +148,26 @@ export async function listMcpTools(force = false): Promise<McpTool[]> {
   return tools;
 }
 
-export async function resetMcpClient(): Promise<void> {
-  const prev = client;
-  client = null;
-  connecting = null;
+/** Close only this user's session. Safe under concurrent prompts for other users. */
+export async function resetMcpClient(discordUserId: string): Promise<void> {
+  const prev = sessions.get(discordUserId);
+  sessions.delete(discordUserId);
   toolsCache = null;
-  if (prev) {
+  if (prev?.client) {
     try {
-      await prev.close();
+      await prev.client.close();
     } catch {
       // ignore
     }
   }
+}
+
+/** Probe connectivity at startup using the first authorized user id. */
+export async function probeMcp(): Promise<number> {
+  const probeId =
+    config.AUTHORIZED_USER_IDS.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)[0] ?? "probe";
+  const tools = await listMcpTools(probeId, true);
+  return tools.length;
 }

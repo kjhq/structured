@@ -38,8 +38,10 @@ async def get_me(user: CurrentUser) -> UserRead:
 
 @router.patch("/me", response_model=UserRead)
 async def patch_me(body: UserUpdate, user: CurrentUser, db: DbSession) -> UserRead:
+    from structured_backend.timeutil import validate_timezone
+
     if body.timezone is not None:
-        user.timezone = body.timezone
+        user.timezone = validate_timezone(body.timezone)
     if body.day_starts_at is not None:
         user.day_starts_at = body.day_starts_at
     if body.email is not None:

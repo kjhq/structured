@@ -95,7 +95,7 @@ async def _session_and_user():
         secret = _bot_secret.get()
     if not discord_id:
         discord_id = _discord_id.get()
-    if not secret or secret != settings.bot_api_secret:
+    if not settings.bot_secret_ok(secret):
         raise AppError("unauthorized", "Invalid bot secret", status_code=401)
     if not discord_id:
         raise AppError(
@@ -103,6 +103,13 @@ async def _session_and_user():
             "Missing X-Discord-Id",
             status_code=401,
             hint="Bot must set Discord user id",
+        )
+    if not settings.is_discord_allowed(discord_id):
+        raise AppError(
+            "unauthorized",
+            "Discord user not allowlisted",
+            status_code=403,
+            hint="Set AUTHORIZED_DISCORD_IDS on the backend",
         )
     factory = _session_factory.get() or SessionLocal
     session = factory()
@@ -125,7 +132,8 @@ def _error(err: Exception) -> dict[str, Any]:
         if err.hint:
             out["hint"] = err.hint
         return out
-    return {"error": True, "code": "internal", "message": str(err)}
+    # Do not leak internal exception text to MCP clients.
+    return {"error": True, "code": "internal", "message": "Internal server error"}
 
 
 @mcp.tool(name="planner_get_overview")

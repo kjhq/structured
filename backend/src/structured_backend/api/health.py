@@ -17,10 +17,10 @@ async def ready(db: DbSession) -> dict[str, str]:
     try:
         await db.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001
+        # Do not leak connection strings or driver details to callers.
         raise AppError(
             "not_ready",
             "Database unavailable",
             status_code=503,
-            hint=str(exc),
         ) from exc
     return {"status": "ready"}

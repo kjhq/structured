@@ -1,10 +1,13 @@
 package com.example.structuredwidget.widget
 
 import android.content.Context
+import com.example.structuredwidget.R
 import com.example.structuredwidget.data.DayBlock
+import com.example.structuredwidget.data.StructuredTask
 import com.example.structuredwidget.data.TaskListItem
 import com.example.structuredwidget.data.TodayState
 import com.example.structuredwidget.data.WeekState
+import com.example.structuredwidget.data.WidgetDisplayState
 import com.example.structuredwidget.widget.common.TimeFormat
 import com.example.structuredwidget.widget.common.WidgetTheme
 import java.time.LocalDate
@@ -14,39 +17,51 @@ import java.util.Locale
 
 class CombinedListFactory(
     private val use24h: Boolean = false,
+    private val compact: Boolean = false,
     private val clock: () -> LocalDate = { LocalDate.now() },
     private val nowProvider: () -> LocalTime = { LocalTime.now() },
 ) {
     companion object {
-        private const val MAX_TOMORROW = 3
-        private const val MAX_TIMED_PER_WEEK_DAY = 4
+        private const val MAX_DUE = 8
+        private const val MAX_DUE_COMPACT = 4
+        private const val MAX_TOMORROW = 4
+        private const val MAX_TIMED_PER_WEEK_DAY = 5
         private const val MAX_INBOX = 8
     }
 
     fun toRowList(
         todayState: TodayState,
         weekState: WeekState,
-        @Suppress("UNUSED_PARAMETER") context: Context,
+        context: Context,
+        displayState: WidgetDisplayState = WidgetDisplayState.LIVE,
+        timezoneMismatch: Boolean = todayState.timezoneMismatch,
     ): List<TaskListItem> {
         val rows = mutableListOf<TaskListItem>()
+        statusBannerFor(context, displayState)?.let { rows += it }
+        if (timezoneMismatch && displayState != WidgetDisplayState.DEMO) {
+            rows += TaskListItem.StatusBanner(
+                message = context.getString(R.string.banner_timezone_mismatch),
+                kind = TaskListItem.StatusBanner.Kind.WARNING,
+            )
+        }
         val accent = todayState.currentAccent ?: WidgetTheme.defaultAccent()
-        val today = clock()
+        val today = todayState.logicalDate ?: clock()
         val now = nowProvider()
         val nowHours = now.hour + now.minute / 60.0
 
-        // —— TODAY ——
-        val todayDf = DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.US)
-        val todayLabel = "●  TODAY · ${today.format(todayDf).uppercase(Locale.US)}"
-        rows += TaskListItem.DayHeader(today, todayLabel, isToday = true, isYesterday = false)
-
-        // Day progress ribbon
-        rows += TaskListItem.DayProgress(
-            progress = TimeFormat.hourOfDayFraction(now.hour, now.minute),
-            startLabel = if (use24h) "00:00" else "12a",
-            endLabel = if (use24h) "24:00" else "12a",
-            nowLabel = TimeFormat.formatHour(nowHours, use24h),
-            accent = accent,
-        )
+        if (todayState.due.isNotEmpty()) {
+            val maxDue = if (compact) MAX_DUE_COMPACT else MAX_DUE
+            rows += TaskListItem.SectionLabel("DUE · ${todayState.due.size}")
+            todayState.due.take(maxDue).forEach { task ->
+                rows += TaskListItem.DueRow(
+                    task = task,
+                    dayLabel = dueDayLabel(task, today),
+                    timeLabel = dueTimeLabel(task),
+                )
+            }
+            val overflow = todayState.due.size - maxDue
+            if (overflow > 0) rows += TaskListItem.MoreRow(overflow)
+        }
 
         if (todayState.isEmpty) {
             rows += TaskListItem.StatusBanner(
@@ -55,7 +70,6 @@ class CombinedListFactory(
             )
         }
 
-        // Hero
         todayState.hero?.let { hero ->
             val start = hero.startTime
             val startMin = ((start ?: 0.0) * 60).toInt()
@@ -101,12 +115,10 @@ class CombinedListFactory(
             )
         }
 
-        // All-day
         todayState.allDay
             .filter { it.id != todayState.hero?.id }
             .forEach { rows += TaskListItem.TaskRow(it) }
 
-        // Up next (with past/current flags)
         todayState.upNext.forEach { t ->
             val start = t.startTime
             val end = if (start != null) start + t.duration / 60.0 else null
@@ -115,7 +127,6 @@ class CombinedListFactory(
             rows += TaskListItem.TaskRow(t, isPast = isPast, isCurrent = isCurrent)
         }
 
-        // Inbox
         if (todayState.inbox.isNotEmpty()) {
             rows += TaskListItem.SectionLabel("INBOX · ${todayState.inbox.size}")
             todayState.inbox.take(MAX_INBOX).forEach { rows += TaskListItem.InboxRow(it) }
@@ -123,8 +134,7 @@ class CombinedListFactory(
             if (overflow > 0) rows += TaskListItem.MoreRow(overflow)
         }
 
-        // Tomorrow preview
-        if (todayState.tomorrow.isNotEmpty()) {
+        if (!compact && todayState.tomorrow.isNotEmpty()) {
             val tomorrow = today.plusDays(1)
             val tf = DateTimeFormatter.ofPattern("EEE", Locale.US)
             rows += TaskListItem.SectionLabel(
@@ -135,20 +145,21 @@ class CombinedListFactory(
             if (overflow > 0) rows += TaskListItem.MoreRow(overflow)
         }
 
-        // —— WEEK ——
-        rows += TaskListItem.SectionLabel("THIS WEEK")
-        for (day in weekState.days) {
-            if (day.isToday) continue
-            if (day.date == today.plusDays(1) && todayState.tomorrow.isNotEmpty()) continue
-            rows += headerFor(day, today)
-            if (day.timed.isEmpty() && day.allDay.isEmpty()) {
-                rows += TaskListItem.EmptyDay(day.date)
-                continue
-            }
-            day.allDay.forEach { rows += TaskListItem.TaskRow(it) }
-            day.timed.take(MAX_TIMED_PER_WEEK_DAY).forEach { rows += TaskListItem.TaskRow(it) }
-            if (day.timed.size > MAX_TIMED_PER_WEEK_DAY) {
-                rows += TaskListItem.MoreRow(day.timed.size - MAX_TIMED_PER_WEEK_DAY)
+        if (!compact) {
+            rows += TaskListItem.SectionLabel("THIS WEEK")
+            for (day in weekState.days) {
+                if (day.isToday) continue
+                if (day.date == today.plusDays(1) && todayState.tomorrow.isNotEmpty()) continue
+                rows += headerFor(day, today)
+                if (day.timed.isEmpty() && day.allDay.isEmpty()) {
+                    rows += TaskListItem.EmptyDay(day.date)
+                    continue
+                }
+                day.allDay.forEach { rows += TaskListItem.TaskRow(it) }
+                day.timed.take(MAX_TIMED_PER_WEEK_DAY).forEach { rows += TaskListItem.TaskRow(it) }
+                if (day.timed.size > MAX_TIMED_PER_WEEK_DAY) {
+                    rows += TaskListItem.MoreRow(day.timed.size - MAX_TIMED_PER_WEEK_DAY)
+                }
             }
         }
 
@@ -166,4 +177,40 @@ class CombinedListFactory(
         }
         return TaskListItem.DayHeader(day.date, label, day.isToday, day.isYesterday)
     }
+
+    private fun dueDayLabel(task: StructuredTask, today: LocalDate): String {
+        val dayStr = task.day ?: return ""
+        val taskDay = LocalDate.parse(dayStr)
+        return if (taskDay == today.minusDays(1)) {
+            "YEST"
+        } else {
+            taskDay.format(DateTimeFormatter.ofPattern("MMM d", Locale.US)).uppercase(Locale.US)
+        }
+    }
+
+    private fun dueTimeLabel(task: StructuredTask): String? {
+        if (task.isAllDay || task.startTime == null) return null
+        return TimeFormat.formatHour(task.startTime, use24h)
+    }
+
+    private fun statusBannerFor(context: Context, state: WidgetDisplayState): TaskListItem.StatusBanner? =
+        when (state) {
+            WidgetDisplayState.DEMO -> TaskListItem.StatusBanner(
+                message = context.getString(R.string.banner_demo),
+                kind = TaskListItem.StatusBanner.Kind.INFO,
+            )
+            WidgetDisplayState.STALE -> TaskListItem.StatusBanner(
+                message = context.getString(R.string.banner_stale),
+                kind = TaskListItem.StatusBanner.Kind.WARNING,
+            )
+            WidgetDisplayState.OFFLINE -> TaskListItem.StatusBanner(
+                message = context.getString(R.string.banner_offline),
+                kind = TaskListItem.StatusBanner.Kind.WARNING,
+            )
+            WidgetDisplayState.RELINK -> TaskListItem.StatusBanner(
+                message = context.getString(R.string.banner_relink),
+                kind = TaskListItem.StatusBanner.Kind.ERROR,
+            )
+            WidgetDisplayState.LIVE -> null
+        }
 }

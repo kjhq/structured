@@ -5,33 +5,24 @@
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="2dp"
-        android:paddingTop="@dimen/space_4"
-        android:paddingBottom="@dimen/space_4">
+    android:paddingStart="0dp"
+    android:paddingTop="@dimen/row_pad_v"
+    android:paddingBottom="@dimen/row_pad_v">
 
     <TextView
         android:id="@+id/week_task_row_time"
-        android:layout_width="52dp"
+        android:layout_width="@dimen/gutter_time"
         android:layout_height="wrap_content"
         android:textAppearance="@style/TextAppearance.Widget.Caption"
         android:maxLines="1"
         android:fontFamily="sans-serif-medium" />
 
     <ImageView
-        android:id="@+id/week_task_row_color"
-        android:layout_width="8dp"
-        android:layout_height="8dp"
-        android:layout_marginStart="0dp"
-        android:layout_marginEnd="6dp"
-        android:src="@drawable/task_color_dot"
-        android:scaleType="center"
-        android:contentDescription="@string/cd_task_color" />
-
-    <ImageView
         android:id="@+id/week_task_row_icon"
-        android:layout_width="16dp"
-        android:layout_height="16dp"
-        android:layout_marginEnd="8dp" />
+        android:layout_width="14dp"
+        android:layout_height="14dp"
+        android:layout_marginEnd="@dimen/space_8"
+        android:contentDescription="@string/cd_task_color" />
 
     <TextView
         android:id="@+id/week_task_row_title"
@@ -47,8 +38,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textAppearance="@style/TextAppearance.Widget.Badge"
-        android:textSize="10sp"
+        android:textSize="9sp"
         android:visibility="gone"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp" />
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp" />
 </LinearLayout>

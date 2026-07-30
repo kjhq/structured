@@ -6,6 +6,10 @@ data class TodayState(
     val upNext: List<StructuredTask>,
     val inbox: List<StructuredTask>,
     val tomorrow: List<StructuredTask>,
+    val due: List<StructuredTask>,
     val currentAccent: Int?,
     val isEmpty: Boolean,
+    val logicalDate: java.time.LocalDate? = null,
+    val serverTimezone: String? = null,
+    val timezoneMismatch: Boolean = false,
 )

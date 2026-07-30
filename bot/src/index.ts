@@ -1,23 +1,37 @@
-import { writeFileSync } from "fs";
+import { unlinkSync, writeFileSync } from "fs";
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
-import { getMcpClient, listMcpTools } from "./mcp.js";
+import { probeMcp } from "./mcp.js";
 
 const READY_PATH = "/tmp/structured-bot-ready";
 
 const bot = createBot();
 
-process.on("unhandledRejection", (err) =>
-  console.error("unhandledRejection", err),
-);
-process.on("uncaughtException", (err) =>
-  console.error("uncaughtException", err),
-);
+function clearReady(): void {
+  try {
+    unlinkSync(READY_PATH);
+  } catch {
+    // ignore
+  }
+}
+
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection", err);
+  clearReady();
+  process.exit(1);
+});
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException", err);
+  clearReady();
+  process.exit(1);
+});
 process.once("SIGINT", () => {
+  clearReady();
   bot.destroy();
   process.exit(0);
 });
 process.once("SIGTERM", () => {
+  clearReady();
   bot.destroy();
   process.exit(0);
 });
@@ -25,19 +39,16 @@ process.once("SIGTERM", () => {
 async function main(): Promise<void> {
   console.log(`Connecting to planner MCP at ${config.MCP_URL}…`);
   try {
-    await getMcpClient();
-    const tools = await listMcpTools(true);
-    console.log(`MCP ready (${tools.length} tools)`);
-    try {
-      writeFileSync(READY_PATH, "ok");
-    } catch (err) {
-      console.warn("Could not write ready file:", err);
-    }
+    const toolCount = await probeMcp();
+    console.log(`MCP ready (${toolCount} tools)`);
+    writeFileSync(READY_PATH, "ok");
   } catch (err) {
-    console.warn(
-      "MCP unavailable — Discord will still start. Ensure backend is up and BOT_API_SECRET matches.",
+    clearReady();
+    console.error(
+      "MCP unavailable — refusing to start. Ensure backend is up and BOT_API_SECRET matches.",
       err instanceof Error ? err.message : err,
     );
+    process.exit(1);
   }
 
   console.log("Starting Discord bot…");
@@ -46,5 +57,6 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error("Failed to start bot", err);
+  clearReady();
   process.exit(1);
 });

@@ -5,6 +5,7 @@ from calendar import monthrange
 from datetime import date, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -68,9 +69,12 @@ def _matches(series: Series, day: date) -> bool:
         weekdays = _decode_weekdays(series.weekdays) or [series.start_day.weekday()]
         if day.weekday() not in weekdays:
             return False
-        # weeks since start
-        delta_weeks = ((day - series.start_day).days) // 7
-        return delta_weeks % series.interval == 0
+        # Monday-based week index from start so interval>1 multi-weekday series
+        # share one week bucket across Mon–Sun of the same calendar week.
+        start_monday = series.start_day - timedelta(days=series.start_day.weekday())
+        day_monday = day - timedelta(days=day.weekday())
+        weeks = (day_monday - start_monday).days // 7
+        return weeks % series.interval == 0
     if series.freq == "monthly":
         if day.day != series.start_day.day:
             # last day of month fallback if start day doesn't exist
@@ -178,15 +182,38 @@ class SeriesService:
         series = await self.get(user, series_id)
         if series is None:
             raise AppError("not_found", "Series not found", status_code=404)
+        if not _matches(series, day):
+            raise AppError(
+                "validation_error",
+                "Day does not match series recurrence",
+                hint="Pick an occurrence day that the rule generates",
+            )
         existing = next((c for c in series.completions if c.occurrence_day == day), None)
         if existing:
             return
         self.db.add(SeriesCompletion(series_id=series.id, occurrence_day=day, completed_at=utcnow()))
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
 
     async def materialize_range(
         self, user: User, day_from: date, day_to: date
     ) -> list[OccurrenceRead]:
+        if day_to < day_from:
+            raise AppError(
+                "validation_error",
+                "day_to must be >= day_from",
+            )
+        span = (day_to - day_from).days + 1
+        from structured_backend.config import settings
+
+        if span > settings.max_range_days:
+            raise AppError(
+                "validation_error",
+                f"Date range exceeds {settings.max_range_days} days",
+                hint=f"Request at most {settings.max_range_days} days at a time",
+            )
         result = await self.db.execute(
             select(Series)
             .options(selectinload(Series.exceptions), selectinload(Series.completions))
@@ -241,3 +268,22 @@ class SeriesService:
                 )
             day += timedelta(days=1)
         return out
+
+    async def latest_missed_occurrences(
+        self, user: User, *, before: date
+    ) -> list[OccurrenceRead]:
+        """One latest incomplete past occurrence per active series."""
+        # Look back a bounded window to avoid unbounded CPU.
+        from structured_backend.config import settings
+
+        lookback = min(90, settings.max_range_days)
+        day_from = before - timedelta(days=lookback)
+        occs = await self.materialize_range(user, day_from, before - timedelta(days=1))
+        latest: dict[uuid.UUID, OccurrenceRead] = {}
+        for occ in occs:
+            if occ.completed_at is not None:
+                continue
+            prev = latest.get(occ.series_id)
+            if prev is None or occ.day > prev.day:
+                latest[occ.series_id] = occ
+        return sorted(latest.values(), key=lambda o: o.day, reverse=True)

@@ -1,11 +1,25 @@
 from datetime import date, datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from structured_backend.errors import AppError
 from structured_backend.models.user import User
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def validate_timezone(name: str) -> str:
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, KeyError, ValueError) as exc:
+        raise AppError(
+            "validation_error",
+            f"Invalid timezone: {name}",
+            hint="Use an IANA timezone name such as Asia/Kolkata",
+            fields={"timezone": "invalid"},
+        ) from exc
+    return name
 
 
 def user_local_now(user: User, now: datetime | None = None) -> datetime:

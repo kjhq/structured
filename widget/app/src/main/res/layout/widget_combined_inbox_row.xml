@@ -5,26 +5,17 @@
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="8dp"
-        android:paddingTop="@dimen/space_4"
-        android:paddingBottom="@dimen/space_4">
-
-    <ImageView
-        android:id="@+id/combined_inbox_color"
-        android:layout_width="8dp"
-        android:layout_height="8dp"
-        android:layout_marginEnd="8dp"
-        android:src="@drawable/task_color_dot"
-        android:scaleType="center"
-        android:contentDescription="@string/cd_task_color" />
+    android:paddingStart="@dimen/gutter_time"
+    android:paddingTop="@dimen/row_pad_v"
+    android:paddingBottom="@dimen/row_pad_v">
 
     <ImageView
         android:id="@+id/combined_inbox_icon"
-        android:layout_width="16dp"
-        android:layout_height="16dp"
-        android:layout_marginEnd="10dp"
+        android:layout_width="14dp"
+        android:layout_height="14dp"
+        android:layout_marginEnd="@dimen/space_8"
         android:src="@drawable/ic_task_checkmark"
-        android:alpha="0.7" />
+        android:contentDescription="@string/cd_task_color" />
 
     <TextView
         android:id="@+id/combined_inbox_row_title"

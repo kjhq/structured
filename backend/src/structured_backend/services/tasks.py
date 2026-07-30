@@ -2,8 +2,11 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from structured_backend.config import settings
 
 from structured_backend.errors import AppError
 from structured_backend.models.alert import Alert
@@ -80,7 +83,22 @@ class TaskService:
             ],
         )
         self.db.add(task)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            if data.client_request_id:
+                existing = await self._by_client_request(user.id, data.client_request_id)
+                if existing:
+                    if _payload_mismatch(existing, data):
+                        raise AppError(
+                            "conflict",
+                            "client_request_id already used with different payload",
+                            status_code=409,
+                            hint="Reuse the same title/day/shape or use a new client_request_id",
+                        )
+                    return existing
+            raise
         return await self.get(user, task.id)  # type: ignore[return-value]
 
     async def get(self, user: User, task_id: uuid.UUID) -> Task | None:
@@ -125,6 +143,18 @@ class TaskService:
         return await self.list_for_day(user, user_today(user, now))
 
     async def list_range(self, user: User, day_from: date, day_to: date) -> list[Task]:
+        if day_to < day_from:
+            raise AppError(
+                "validation_error",
+                "day_to must be >= day_from",
+            )
+        span = (day_to - day_from).days + 1
+        if span > settings.max_range_days:
+            raise AppError(
+                "validation_error",
+                f"Date range exceeds {settings.max_range_days} days",
+                hint=f"Request at most {settings.max_range_days} days at a time",
+            )
         result = await self.db.execute(
             select(Task)
             .options(selectinload(Task.alerts))
@@ -161,7 +191,9 @@ class TaskService:
         )
         return list(result.scalars().all())
 
-    async def update(self, user: User, task_id: uuid.UUID, data: TaskUpdate) -> Task:
+    async def update(
+        self, user: User, task_id: uuid.UUID, data: TaskUpdate, *, commit: bool = True
+    ) -> Task:
         task = await self.get(user, task_id)
         if task is None:
             raise AppError("not_found", "Task not found", status_code=404)
@@ -187,17 +219,23 @@ class TaskService:
             task.start_time = None
 
         task.updated_at = utcnow()
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
         return await self.get(user, task_id)  # type: ignore[return-value]
 
-    async def complete(self, user: User, task_id: uuid.UUID) -> Task:
+    async def complete(self, user: User, task_id: uuid.UUID, *, commit: bool = True) -> Task:
         task = await self.get(user, task_id)
         if task is None:
             raise AppError("not_found", "Task not found", status_code=404)
         if task.completed_at is None:
             task.completed_at = utcnow()
             task.updated_at = utcnow()
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
+            else:
+                await self.db.flush()
         return await self.get(user, task_id)  # type: ignore[return-value]
 
     async def uncomplete(self, user: User, task_id: uuid.UUID) -> Task:
@@ -210,13 +248,16 @@ class TaskService:
             await self.db.commit()
         return await self.get(user, task_id)  # type: ignore[return-value]
 
-    async def soft_delete(self, user: User, task_id: uuid.UUID) -> None:
+    async def soft_delete(self, user: User, task_id: uuid.UUID, *, commit: bool = True) -> None:
         task = await self.get(user, task_id)
         if task is None:
             raise AppError("not_found", "Task not found", status_code=404)
         task.deleted_at = utcnow()
         task.updated_at = utcnow()
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def _by_client_request(self, user_id: uuid.UUID, client_request_id: str) -> Task | None:
         result = await self.db.execute(
@@ -229,3 +270,19 @@ class TaskService:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _payload_mismatch(existing: Task, data: TaskCreate) -> bool:
+    if existing.title != data.title:
+        return True
+    if existing.day != data.day:
+        return True
+    if existing.start_time != data.start_time:
+        return True
+    if existing.is_all_day != data.is_all_day:
+        return True
+    if existing.duration_minutes != data.duration_minutes:
+        return True
+    if existing.notes != data.notes:
+        return True
+    return False

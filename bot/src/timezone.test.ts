@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { todayYmd, todayHuman, nowLocal } from "./timezone.js";
+import { todayYmd, todayHuman, nowLocal, ymdToHuman } from "./timezone.js";
 
 describe("timezone", () => {
   it("todayYmd returns YYYY-MM-DD in UTC", () => {
@@ -30,5 +30,11 @@ describe("timezone", () => {
     assert.equal(nowLocal(d, "UTC"), "12:00 PM");
     // Kolkata is UTC+5:30 → 5:30 PM
     assert.equal(nowLocal(d, "Asia/Kolkata"), "5:30 PM");
+  });
+
+  it("ymdToHuman formats server logical date", () => {
+    const s = ymdToHuman("2026-07-08", "Asia/Kolkata");
+    assert.match(s, /July/);
+    assert.match(s, /8/);
   });
 });

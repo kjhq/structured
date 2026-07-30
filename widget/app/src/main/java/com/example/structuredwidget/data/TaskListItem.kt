@@ -10,15 +10,6 @@ sealed class TaskListItem {
         val isYesterday: Boolean,
     ) : TaskListItem()
 
-    /** Day-progress ribbon: fraction of day elapsed (0..1) plus labels. */
-    data class DayProgress(
-        val progress: Float,
-        val startLabel: String,
-        val endLabel: String,
-        val nowLabel: String,
-        val accent: Int,
-    ) : TaskListItem()
-
     data class TaskRow(
         val task: StructuredTask,
         val isPast: Boolean = false,
@@ -26,6 +17,12 @@ sealed class TaskListItem {
     ) : TaskListItem()
 
     data class InboxRow(val task: StructuredTask) : TaskListItem()
+
+    data class DueRow(
+        val task: StructuredTask,
+        val dayLabel: String,
+        val timeLabel: String?,
+    ) : TaskListItem()
     data class MoreRow(val count: Int) : TaskListItem()
     data class EmptyDay(val date: LocalDate) : TaskListItem()
 
@@ -44,6 +41,6 @@ sealed class TaskListItem {
         val message: String,
         val kind: Kind,
     ) : TaskListItem() {
-        enum class Kind { INFO, EMPTY, ERROR }
+        enum class Kind { INFO, EMPTY, ERROR, WARNING }
     }
 }

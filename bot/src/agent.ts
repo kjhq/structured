@@ -1,24 +1,35 @@
-import { getMcpClient, listMcpTools, resetMcpClient, setMcpDiscordUserId } from "./mcp.js";
+import { getMcpClient, listMcpTools, resetMcpClient } from "./mcp.js";
 import { chat, type LLMMessage } from "./llm.js";
 import { config } from "./config.js";
-import { load, push, checkDateReset, trim } from "./store.js";
-import { todayYmd, todayHuman, nowLocal } from "./timezone.js";
+import { load, push, checkDateReset, trim, historyKey } from "./store.js";
+import { nowLocal } from "./timezone.js";
+import {
+  fetchUserContext,
+  formatContextForPrompt,
+  type UserContext,
+} from "./userContext.js";
 
-const TZ = config.TIMEZONE;
 const MAX_TOOL_CALLS = config.MAX_TOOL_CALLS;
 /** Cap huge MCP payloads so history stays within limits. */
 const MAX_TOOL_RESULT_CHARS = 12_000;
 
-function buildSystemPrompt(): string {
-  const dateStr = todayHuman();
-  const ymd = todayYmd();
-  const timeStr = nowLocal();
+type ChatFn = typeof chat;
+let chatImpl: ChatFn = chat;
+
+/** Test hook — swap LLM client without touching production env. */
+export function setChatImplForTest(fn: ChatFn | null): void {
+  chatImpl = fn ?? chat;
+}
+
+function buildSystemPrompt(ctx: UserContext): string {
+  const { timezone, todayYmd: ymd, todayHuman: dateStr } = formatContextForPrompt(ctx);
+  const timeStr = nowLocal(undefined, timezone);
 
   return [
     "You are a task management assistant for the user's self-hosted planner. Be concise, direct, and useful.",
 
     `## Timezone — FIXED, DO NOT ASK`,
-    `The user's timezone is ${TZ} (also stored on the server). NEVER ask for timezone. Do NOT pass a timezone parameter to tools — the server applies it. If the user mentions another zone, ignore and keep ${TZ}.`,
+    `The user's timezone is ${timezone} (from their server profile). NEVER ask for timezone. Do NOT pass a timezone parameter to tools — the server applies it. If the user mentions another zone, ignore and keep ${timezone}.`,
 
     "Use planner_* tools via function calling.",
 
@@ -53,7 +64,7 @@ function buildSystemPrompt(): string {
     "Use Markdown: **bold**, *italic*, `code`, ```pre```, [text](url), ~~strikethrough~~.",
     "Use - for lists. No tables. No emojis unless the user uses them first.",
 
-    `Today is ${dateStr} (${ymd}). Current local time is ${timeStr} (${TZ}).`,
+    `Today is ${dateStr} (${ymd}). Current local time is ${timeStr} (${timezone}).`,
   ].join("\n\n");
 }
 
@@ -107,36 +118,40 @@ export async function prompt(
   channelId: string | undefined,
   discordUserId: string,
 ): Promise<string> {
-  checkDateReset();
-  setMcpDiscordUserId(discordUserId);
+  const key =
+    channelId !== undefined ? historyKey(discordUserId, channelId) : undefined;
+  const userCtx = await fetchUserContext(discordUserId);
+  if (key !== undefined) checkDateReset(key, userCtx.today);
+
   try {
-    try {
-      return await runPrompt(query, channelId);
-    } catch (err) {
-      // Stale MCP session / dead transport — reconnect once and retry.
-      if (isRetryableTransportError(err)) {
-        console.error("prompt transport error, reconnecting once:", err);
-        await resetMcpClient();
-        return await runPrompt(query, channelId);
-      }
-      throw err;
+    return await runPrompt(query, discordUserId, channelId, userCtx);
+  } catch (err) {
+    // Stale MCP session / dead transport — reconnect this user once and retry.
+    if (isRetryableTransportError(err)) {
+      console.error("prompt transport error, reconnecting once:", err);
+      await resetMcpClient(discordUserId);
+      const retryCtx = await fetchUserContext(discordUserId);
+      if (key !== undefined) checkDateReset(key, retryCtx.today);
+      return await runPrompt(query, discordUserId, channelId, retryCtx);
     }
-  } finally {
-    setMcpDiscordUserId(null);
+    throw err;
   }
 }
 
-async function runPrompt(query: string, channelId?: string): Promise<string> {
-  const mcp = await getMcpClient();
-  const tools = await listMcpTools();
+async function runPrompt(
+  query: string,
+  discordUserId: string,
+  channelId: string | undefined,
+  userCtx: UserContext,
+): Promise<string> {
+  const mcp = await getMcpClient(discordUserId);
+  const tools = await listMcpTools(discordUserId);
 
-  // Always inject a fresh system prompt (date/time). History omits system messages.
-  const history =
-    channelId !== undefined
-      ? load(channelId).filter((m) => m.role !== "system")
-      : [];
+  const key =
+    channelId !== undefined ? historyKey(discordUserId, channelId) : undefined;
+  const history = key !== undefined ? load(key).filter((m) => m.role !== "system") : [];
   const messages: LLMMessage[] = [
-    { role: "system", content: buildSystemPrompt() },
+    { role: "system", content: buildSystemPrompt(userCtx) },
     ...history,
     { role: "user", content: query },
   ];
@@ -144,16 +159,16 @@ async function runPrompt(query: string, channelId?: string): Promise<string> {
   let toolCount = 0;
 
   while (toolCount < MAX_TOOL_CALLS) {
-    const response = await chat(messages, tools);
+    const response = await chatImpl(messages, tools);
 
     if (!response.tool_calls || response.tool_calls.length === 0) {
-      if (channelId !== undefined) {
+      if (key !== undefined) {
         push(
-          channelId,
+          key,
           { role: "user", content: query },
           { role: "assistant", content: response.content ?? null },
         );
-        trim(channelId);
+        trim(key);
       }
       return response.content ?? "";
     }
@@ -165,7 +180,18 @@ async function runPrompt(query: string, channelId?: string): Promise<string> {
     });
 
     for (const tc of response.tool_calls) {
-      const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+      } catch (err) {
+        messages.push({
+          role: "tool",
+          content: `Error: invalid tool arguments JSON: ${err instanceof Error ? err.message : String(err)}`,
+          tool_call_id: tc.id,
+        });
+        toolCount++;
+        continue;
+      }
       try {
         const res = await mcp.callTool({
           name: tc.function.name,
@@ -187,14 +213,14 @@ async function runPrompt(query: string, channelId?: string): Promise<string> {
     }
   }
 
-  const final = await chat(messages);
-  if (channelId !== undefined) {
+  const final = await chatImpl(messages);
+  if (key !== undefined) {
     push(
-      channelId,
+      key,
       { role: "user", content: query },
       { role: "assistant", content: final.content ?? "Done." },
     );
-    trim(channelId);
+    trim(key);
   }
   return final.content ?? "Done.";
 }

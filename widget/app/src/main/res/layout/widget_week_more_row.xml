@@ -3,9 +3,9 @@
     android:id="@+id/row_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:paddingStart="52dp"
-    android:paddingTop="@dimen/space_4"
-    android:paddingBottom="@dimen/space_4">
+    android:paddingStart="@dimen/gutter_time"
+    android:paddingTop="@dimen/row_pad_v"
+    android:paddingBottom="@dimen/row_pad_v">
     <TextView
         android:id="@+id/week_more_row_label"
         android:layout_width="wrap_content"
