@@ -1,4 +1,4 @@
-import { getMcpClient } from "./mcp.js";
+import { callToolForUser } from "./mcp.js";
 import { config } from "./config.js";
 import { todayYmd, ymdToHuman } from "./timezone.js";
 
@@ -6,6 +6,8 @@ export interface UserContext {
   timezone: string;
   /** Server logical date YYYY-MM-DD */
   today: string;
+  /** profile = MCP overview; fallback = bot default (do not date-reset). */
+  source?: "profile" | "fallback";
 }
 
 type McpContent = { type: string; text?: string };
@@ -30,7 +32,7 @@ function extractMcpJson(result: { content?: McpContent[] }): Record<string, unkn
 
 function fallbackContext(): UserContext {
   const timezone = config.TIMEZONE;
-  return { timezone, today: todayYmd(undefined, timezone) };
+  return { timezone, today: todayYmd(undefined, timezone), source: "fallback" };
 }
 
 type FetchContextFn = (discordUserId: string) => Promise<UserContext>;
@@ -47,10 +49,9 @@ export async function fetchUserContext(discordUserId: string): Promise<UserConte
 
   const fallback = fallbackContext();
   try {
-    const mcp = await getMcpClient(discordUserId);
-    const res = await mcp.callTool({
-      name: "planner_get_overview",
-      arguments: { response_format: "concise", next_n: 1 },
+    const res = await callToolForUser(discordUserId, "planner_get_overview", {
+      response_format: "concise",
+      next_n: 1,
     });
     const data = extractMcpJson(res as { content?: McpContent[] });
     if (!data || data.error === true) return fallback;
@@ -63,7 +64,7 @@ export async function fetchUserContext(discordUserId: string): Promise<UserConte
       typeof data.today === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.today)
         ? data.today
         : todayYmd(undefined, timezone);
-    return { timezone, today };
+    return { timezone, today, source: "profile" };
   } catch {
     return fallback;
   }

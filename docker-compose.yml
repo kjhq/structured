@@ -25,7 +25,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://structured:structured@postgres:5432/structured
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
       BOT_API_SECRET: ${BOT_API_SECRET:?BOT_API_SECRET must be set}
-      AUTHORIZED_DISCORD_IDS: ${AUTHORIZED_DISCORD_IDS:-}
+      AUTHORIZED_DISCORD_IDS: ${AUTHORIZED_DISCORD_IDS:?AUTHORIZED_DISCORD_IDS must be set}
       REQUIRE_SECURE_SECRETS: "true"
       ENABLE_MCP: "true"
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}

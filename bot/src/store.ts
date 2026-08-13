@@ -3,7 +3,10 @@ import { config } from "./config.js";
 import { loadHistoryFile, saveHistoryFile } from "./historyFile.js";
 
 const store = new Map<string, LLMMessage[]>();
+const recentKeys: string[] = [];
 const lastDateByKey = new Map<string, string>();
+const DEFAULT_MAX_HISTORY_KEYS = 256;
+let maxHistoryKeys = DEFAULT_MAX_HISTORY_KEYS;
 
 function persist(): void {
   try {
@@ -17,9 +20,11 @@ function hydrate(): void {
   const file = loadHistoryFile();
   store.clear();
   lastDateByKey.clear();
+  recentKeys.length = 0;
   for (const [key, conv] of Object.entries(file.conversations)) {
     store.set(key, conv.messages ?? []);
     if (conv.logical_date) lastDateByKey.set(key, conv.logical_date);
+    recentKeys.push(key);
   }
 }
 
@@ -30,19 +35,40 @@ export function historyKey(discordUserId: string, channelId: string): string {
   return `${discordUserId}:${channelId}`;
 }
 
+export function setMaxHistoryKeysForTest(n: number | null): void {
+  maxHistoryKeys = n ?? DEFAULT_MAX_HISTORY_KEYS;
+}
+
+function touchKey(key: string): void {
+  const i = recentKeys.indexOf(key);
+  if (i >= 0) recentKeys.splice(i, 1);
+  recentKeys.push(key);
+  while (recentKeys.length > maxHistoryKeys) {
+    const drop = recentKeys.shift();
+    if (!drop) break;
+    store.delete(drop);
+    lastDateByKey.delete(drop);
+  }
+}
+
 export function load(key: string): LLMMessage[] {
-  return store.get(key) ?? [];
+  const msgs = store.get(key);
+  if (msgs) touchKey(key);
+  return msgs ?? [];
 }
 
 export function push(key: string, ...messages: LLMMessage[]): void {
   const existing = store.get(key) ?? [];
   existing.push(...messages);
   store.set(key, existing);
+  touchKey(key);
   persist();
 }
 
 export function clear(key: string): void {
   store.delete(key);
+  const i = recentKeys.indexOf(key);
+  if (i >= 0) recentKeys.splice(i, 1);
   persist();
 }
 
@@ -52,6 +78,8 @@ export function historySize(key: string): number {
 
 export function resetAll(): void {
   store.clear();
+  recentKeys.length = 0;
+  lastDateByKey.clear();
   persist();
 }
 
@@ -84,7 +112,7 @@ export function checkDateReset(key?: string, serverToday?: string): boolean {
   if (!key || !serverToday) return false;
   const prev = lastDateByKey.get(key);
   if (prev && prev !== serverToday) {
-    store.delete(key);
+    clear(key);
     lastDateByKey.set(key, serverToday);
     persist();
     return true;

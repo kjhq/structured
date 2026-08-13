@@ -9,6 +9,7 @@ import {
   getMcpClient,
   resetMcpClient,
   isMcpConnected,
+  callToolForUser,
 } from "./mcp.js";
 import {
   FIXTURE_USERS,
@@ -103,5 +104,62 @@ describe("mcp integration", () => {
     await getMcpClient(FIXTURE_USERS.alice);
     assert.equal(aliceConnects, 2);
     assert.equal(bobConnects, 1);
+  });
+
+  it("serializes callTool for the same user", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    setMcpClientFactoryForTest(async () => {
+      return {
+        connect: async () => {},
+        close: async () => {},
+        listTools: async () => ({ tools: [] }),
+        callTool: async () => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 30));
+          inFlight--;
+          return { content: [{ type: "text", text: "{}" }] };
+        },
+      } as unknown as Client;
+    });
+
+    await Promise.all([
+      callToolForUser(FIXTURE_USERS.alice, "planner_get_overview", {}),
+      callToolForUser(FIXTURE_USERS.alice, "planner_find_tasks", {}),
+    ]);
+    assert.equal(maxInFlight, 1);
+  });
+
+  it("resetMcpClient awaits in-flight connect and closes that client", async () => {
+    let closed = 0;
+    let connectStarted = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    setMcpClientFactoryForTest(async () => {
+      connectStarted = true;
+      await gate;
+      return {
+        connect: async () => {},
+        close: async () => {
+          closed++;
+        },
+        listTools: async () => ({ tools: [] }),
+        callTool: async () => ({ content: [{ type: "text", text: "{}" }] }),
+      } as unknown as Client;
+    });
+
+    const connecting = getMcpClient(FIXTURE_USERS.alice);
+    while (!connectStarted) {
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    const resetting = resetMcpClient(FIXTURE_USERS.alice);
+    release();
+    await connecting;
+    await resetting;
+    assert.equal(closed, 1);
+    assert.equal(isMcpConnected(FIXTURE_USERS.alice), false);
   });
 });

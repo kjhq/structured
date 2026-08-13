@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from structured_backend.db.base import Base
+from structured_backend.config import Settings, settings
 from structured_backend.db.session import get_db
 from structured_backend.main import app as fastapi_app
 from structured_backend.models import (  # noqa: F401
@@ -19,6 +20,24 @@ from structured_backend.models import (  # noqa: F401
     User,
 )
 from structured_backend.services import users as user_service
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_allowlist: use production Discord allowlist logic",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _allow_discord_in_tests(request, monkeypatch):
+    if request.node.get_closest_marker("real_allowlist"):
+        return
+    monkeypatch.setattr(
+        Settings,
+        "is_discord_allowed",
+        lambda self, _discord_id: True,
+    )
 
 
 @pytest_asyncio.fixture

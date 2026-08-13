@@ -1,4 +1,9 @@
-import { getMcpClient, listMcpTools, resetMcpClient } from "./mcp.js";
+import {
+  getMcpClient,
+  listMcpTools,
+  resetMcpClient,
+  callToolForUser,
+} from "./mcp.js";
 import { chat, type LLMMessage } from "./llm.js";
 import { config } from "./config.js";
 import { load, push, checkDateReset, trim, historyKey } from "./store.js";
@@ -143,9 +148,10 @@ function isRetryableTransportError(err: unknown): boolean {
   };
   const name = e.name ?? e.constructor?.name ?? "";
   const msg = (e.message ?? "").toLowerCase();
+  if (name === "UnauthorizedError" || msg.includes("unauthorized")) {
+    return false;
+  }
   return (
-    name === "UnauthorizedError" ||
-    msg.includes("unauthorized") ||
     msg.includes("econnreset") ||
     msg.includes("socket") ||
     msg.includes("fetch failed") ||
@@ -153,8 +159,6 @@ function isRetryableTransportError(err: unknown): boolean {
     msg.includes("connection")
   );
 }
-
-type McpClient = Awaited<ReturnType<typeof getMcpClient>>;
 
 class ToolCallReconnectFailed extends Error {
   constructor(readonly original: unknown) {
@@ -168,19 +172,12 @@ class ToolCallReconnectFailed extends Error {
 }
 
 async function callToolWithSessionRecovery(
-  client: McpClient,
   discordUserId: string,
   name: string,
   args: Record<string, unknown>,
-): Promise<{
-  client: McpClient;
-  result: Awaited<ReturnType<McpClient["callTool"]>>;
-}> {
+): Promise<Awaited<ReturnType<typeof callToolForUser>>> {
   try {
-    return {
-      client,
-      result: await client.callTool({ name, arguments: args }),
-    };
+    return await callToolForUser(discordUserId, name, args);
   } catch (err) {
     if (!isStaleMcpSessionError(err)) throw err;
   }
@@ -188,11 +185,7 @@ async function callToolWithSessionRecovery(
   console.error("stale MCP session, reconnecting before retrying tool call");
   try {
     await resetMcpClient(discordUserId);
-    const reconnected = await getMcpClient(discordUserId);
-    return {
-      client: reconnected,
-      result: await reconnected.callTool({ name, arguments: args }),
-    };
+    return await callToolForUser(discordUserId, name, args);
   } catch (err) {
     if (isRetryableTransportError(err)) {
       throw new ToolCallReconnectFailed(err);
@@ -274,18 +267,27 @@ export async function promptFull(
   const key =
     channelId !== undefined ? historyKey(discordUserId, channelId) : undefined;
   const userCtx = await fetchUserContext(discordUserId);
-  if (key !== undefined) checkDateReset(key, userCtx.today);
+  if (key !== undefined && userCtx.source !== "fallback") {
+    checkDateReset(key, userCtx.today);
+  }
 
+  // Tracks whether any MCP tool call was attempted — if so, never replay the
+  // whole prompt on transport errors (mutating tools must not double-fire).
+  const replay = { toolsStarted: 0 };
   try {
-    return await runPrompt(query, discordUserId, channelId, userCtx, options);
+    return await runPrompt(query, discordUserId, channelId, userCtx, options, replay);
   } catch (err) {
-    // Stale MCP session / dead transport — reconnect this user once and retry.
-    if (isRetryableTransportError(err)) {
+    // Stale MCP session / dead transport before any tool call — reconnect once.
+    if (isRetryableTransportError(err) && replay.toolsStarted === 0) {
       console.error("prompt transport error, reconnecting once:", err);
       await resetMcpClient(discordUserId);
       const retryCtx = await fetchUserContext(discordUserId);
-      if (key !== undefined) checkDateReset(key, retryCtx.today);
-      return await runPrompt(query, discordUserId, channelId, retryCtx, options);
+      if (key !== undefined && retryCtx.source !== "fallback") {
+        checkDateReset(key, retryCtx.today);
+      }
+      return await runPrompt(query, discordUserId, channelId, retryCtx, options, {
+        toolsStarted: 0,
+      });
     }
     throw err;
   }
@@ -296,9 +298,10 @@ async function runPrompt(
   discordUserId: string,
   channelId: string | undefined,
   userCtx: UserContext,
-  options?: PromptOptions,
+  options: PromptOptions | undefined,
+  replay: { toolsStarted: number },
 ): Promise<PromptResult> {
-  let mcp = await getMcpClient(discordUserId);
+  await getMcpClient(discordUserId);
   const tools = await listMcpTools(discordUserId);
 
   const key =
@@ -348,17 +351,16 @@ async function runPrompt(
         continue;
       }
       injectClientRequestId(tc.function.name, args, options?.clientRequestId);
+      replay.toolsStarted++;
       try {
-        const call = await callToolWithSessionRecovery(
-          mcp,
+        const result = await callToolWithSessionRecovery(
           discordUserId,
           tc.function.name,
           args,
         );
-        mcp = call.client;
         const text = truncateToolResult(
           extractText(
-            call.result as { content: Array<{ type: string; text?: string }> },
+            result as { content: Array<{ type: string; text?: string }> },
           ),
         );
         messages.push({
@@ -388,14 +390,15 @@ async function runPrompt(
   }
 
   const final = await chatImpl(messages);
+  const note = `\n\n(Stopped after ${MAX_TOOL_CALLS} tool calls — send another message if you need more.)`;
+  const content = (final.content ?? "Done.") + note;
   if (key !== undefined) {
     push(
       key,
       { role: "user", content: query },
-      { role: "assistant", content: final.content ?? "Done." },
+      { role: "assistant", content },
     );
     trim(key);
   }
-  return { content: final.content ?? "Done.", mutations };
+  return { content, mutations };
 }
-

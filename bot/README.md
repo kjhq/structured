@@ -26,7 +26,7 @@ Deploy order: migrate API (`alembic upgrade` 0003), then recreate the bot contai
 | `LLM_API_KEY` | yes | – | llm provider key |
 | `LLM_BASE_URL` | no | mistral | openai-compatible base |
 | `LLM_MODEL` | no | mistral-medium-latest | model |
-| `AUTHORIZED_USER_IDS` | yes | – | comma-separated Discord snowflakes |
+| `AUTHORIZED_USER_IDS` | yes | – | comma-separated Discord snowflakes (must also be in backend `AUTHORIZED_DISCORD_IDS`) |
 | `BOT_API_SECRET` | yes | – | must match backend `BOT_API_SECRET` |
 | `API_BASE_URL` | no | `http://127.0.0.1:8000` | REST base for `/v1/bot/*` |
 | `TIMEZONE` | no | UTC | display / default user TZ on link |
@@ -41,6 +41,7 @@ Deploy order: migrate API (`alembic upgrade` 0003), then recreate the bot contai
 - `/help` `/link` `/relink` `/timezone` `/status` `/clear`
 - `/today` `/inbox` `/open` `/week` `/add` `/settings`
 - Right-click a message → **Inbox this**
-- any other text → LLM agent + planner tools (scoped to your Discord ID)
+- DMs: any other text → LLM agent + planner tools (scoped to your Discord ID)
+- Guilds: mention the bot or reply to it, then natural language
 
 Add = calendar. Remind/ping = calendar + Discord DM. Briefings stay off until `/settings briefing`.

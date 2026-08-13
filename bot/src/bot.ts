@@ -10,6 +10,7 @@ import {
   EmbedBuilder,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   Partials,
   SlashCommandBuilder,
   type ButtonInteraction,
@@ -19,7 +20,7 @@ import {
   type TextBasedChannel,
 } from "discord.js";
 import { config, isAuthorizedUser } from "./config.js";
-import { promptFull, type PlannerMutation } from "./agent.js";
+import { promptFull, type PlannerMutation, type PromptResult } from "./agent.js";
 import { clear, historySize, historyKey } from "./store.js";
 import { enqueue, queueKey } from "./queue.js";
 import { getMcpClient, isMcpConnected, listMcpTools } from "./mcp.js";
@@ -64,6 +65,18 @@ import { notifyStatusLine } from "./notifyWorker.js";
 /** Discord message limit is 2000 chars. */
 const DISCORD_CHUNK = 1900;
 const INBOX_THIS_RE = /^(inbox this|remind me about that)\b/i;
+
+type PromptFn = (
+  text: string,
+  channelId: string | undefined,
+  discordUserId: string,
+) => Promise<string>;
+let promptImpl: PromptFn | null = null;
+
+/** Test hook — swap planner prompt without Discord or LLM. */
+export function setPromptForTest(fn: PromptFn | null): void {
+  promptImpl = fn;
+}
 
 function splitMessage(text: string, max = DISCORD_CHUNK): string[] {
   if (text.length <= max) return [text];
@@ -119,7 +132,7 @@ async function replySafe(
 }
 
 const HELP_TEXT =
-  "Planner\n\n" +
+  "Planner Task Bot\n\n" +
   "Chat naturally, or use shortcuts:\n" +
   "/today  /inbox  /open  /week  /add  /timezone  /settings\n\n" +
   "Examples:\n" +
@@ -222,16 +235,27 @@ async function unauthorizedReply(
   target: ChatInputCommandInteraction | Message | ButtonInteraction | MessageContextMenuCommandInteraction,
 ): Promise<void> {
   if ("reply" in target && "commandName" in target) {
-    await target.reply({ content: "Unauthorized.", ephemeral: true });
+    await target.reply({ content: "Unauthorized.", flags: MessageFlags.Ephemeral });
     return;
   }
   if ("isButton" in target && typeof target.isButton === "function") {
-    await target.reply({ content: "Unauthorized.", ephemeral: true });
+    await target.reply({ content: "Unauthorized.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  // Non-allowlisted users in guilds stay silent — no spam in servers.
+  if ("guild" in target && target.guild) {
     return;
   }
   if ("reply" in target) {
-    await target.reply("Unauthorized.");
+    await target.reply({
+      content: "Unauthorized.",
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   }
+}
+
+function stripBotMention(text: string, botId: string): string {
+  return text.replace(new RegExp(`<@!?${botId}>`, "g"), "").trim();
 }
 
 function formatSettings(s: UserSettings): string {
@@ -268,7 +292,6 @@ async function handleStatus(discordUserId: string, channelId: string): Promise<s
   return [
     `Timezone: ${timezone}`,
     `Model: ${config.LLM_MODEL}`,
-    `LLM: ${config.LLM_BASE_URL}`,
     `MCP connected: ${isMcpConnected(discordUserId) ? "yes" : "no"}`,
     `MCP tools: ${toolCount}`,
     `History messages: ${historySize(key)}`,
@@ -277,7 +300,7 @@ async function handleStatus(discordUserId: string, channelId: string): Promise<s
 }
 
 export async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const base = config.API_BASE_URL.replace(/\/$/, "");
 
   let prepareRes: Response;
@@ -413,7 +436,12 @@ async function handlePrompt(
       }, 8000);
 
       try {
-        const result = await promptFull(text, channelId, discordUserId, { clientRequestId });
+        let result: PromptResult;
+        if (promptImpl) {
+          result = { content: await promptImpl(text, channelId, discordUserId), mutations: [] };
+        } else {
+          result = await promptFull(text, channelId, discordUserId, { clientRequestId });
+        }
         await replySafe(channel, result.content, { components: rowsFromMutations(result.mutations) });
       } catch (err) {
         console.error("prompt failed", err);
@@ -526,7 +554,7 @@ async function handleAddSlash(interaction: ChatInputCommandInteraction): Promise
 
 async function handleSettingsSlash(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     if (sub === "get") {
       const s = await getSettings(interaction.user.id);
@@ -584,7 +612,10 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
 
   switch (interaction.commandName) {
     case "help":
-      await interaction.reply(HELP_TEXT);
+      await interaction.reply({
+        content: HELP_TEXT,
+        flags: MessageFlags.Ephemeral,
+      });
       break;
     case "link":
     case "relink":
@@ -601,19 +632,24 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
         );
         break;
       }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const ctx = await fetchUserContext(userId);
-      await interaction.reply(
+      await interaction.editReply(
         `Your server timezone is \`${ctx.timezone}\` (logical today: ${ctx.today}). ` +
           `Bot default for new users on /link is \`${config.TIMEZONE}\`.`,
       );
       break;
     }
-    case "clear":
-      clear(historyKey(userId, channelId));
-      await interaction.reply("Conversation history cleared.");
+    case "clear": {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await enqueue(queueKey(userId, channelId), async () => {
+        clear(historyKey(userId, channelId));
+      });
+      await interaction.editReply("Conversation history cleared.");
       break;
+    }
     case "status": {
-      await interaction.deferReply();
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await interaction.editReply(await handleStatus(userId, channelId));
       break;
     }
@@ -685,7 +721,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
   }
   const parsed = parseCustomId(interaction.customId);
   if (!parsed) {
-    await interaction.reply({ content: "Unknown button.", ephemeral: true });
+    await interaction.reply({ content: "Unknown button.", flags: MessageFlags.Ephemeral });
     return;
   }
   await enqueue(`user:${interaction.user.id}`, async () => {
@@ -722,7 +758,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     } catch (err) {
       const msg = apiErrorMessage(err);
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: msg, ephemeral: true }).catch(() => {});
+        await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
       }
       if (/Undo expired/.test(msg)) {
         const expired = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -758,7 +794,7 @@ async function handleContextMenu(interaction: MessageContextMenuCommandInteracti
     await unauthorizedReply(interaction);
     return;
   }
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const target = interaction.targetMessage;
     await createInboxThis(interaction.user.id, {
@@ -775,7 +811,7 @@ async function handleContextMenu(interaction: MessageContextMenuCommandInteracti
 
 async function handleCaptureAndMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
-  const botId = message.client.user?.id;
+  const botId = message.client?.user?.id;
   let settings: UserSettings | null = null;
   if (isAuthorizedUser(message.author.id)) {
     try {
@@ -784,18 +820,27 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
       settings = null;
     }
   }
-  const gate = gateMessage(message, settings, botId);
+  let gate = gateMessage(message, settings, botId);
   if (gate === "unauthorized") {
     await unauthorizedReply(message);
     return;
+  }
+  if (gate === "silent" && message.guild && botId && message.reference?.messageId) {
+    // mentions.repliedUser can be missing — resolve the reply target directly.
+    try {
+      const ref = await message.fetchReference();
+      if (ref.author?.id === botId) gate = "handle";
+    } catch {
+      // not a reply to the bot
+    }
   }
   if (gate === "silent") return;
 
   const channel = message.channel;
   if (!channel.isTextBased()) return;
 
-  const images = [...message.attachments.values()].filter(isImageAttachment);
-  const voices = [...message.attachments.values()].filter(isVoiceAttachment);
+  const images = [...(message.attachments?.values() ?? [])].filter(isImageAttachment);
+  const voices = [...(message.attachments?.values() ?? [])].filter(isVoiceAttachment);
   const decision = captureDecision({
     hasImage: images.length > 0,
     hasVoice: voices.length > 0,
@@ -876,7 +921,12 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
     return;
   }
 
-  const text = message.content.trim();
+  let text = message.content.trim();
+  const me = message.client.user;
+  if (me && message.guild) {
+    text = stripBotMention(text, me.id);
+    if (!text) return;
+  }
   if (INBOX_THIS_RE.test(text) && message.reference?.messageId) {
     try {
       const src = await message.fetchReference();
@@ -945,7 +995,7 @@ export function registerBotHandlers(client: Client): void {
           : interaction.reply.bind(interaction);
         await reply({
           content: "Something went wrong. Try again.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         }).catch(() => {});
       }
     }

@@ -111,7 +111,6 @@ async def _get_or_create_discord_user(
     validate_timezone(timezone)
     user = await get_user_by_discord_id(db, discord_id)
     if user is not None:
-        user.timezone = timezone
         return user
     # Do not auto-adopt orphan users — that can bind the wrong Discord identity.
     user = User(discord_id=discord_id, timezone=timezone, day_starts_at=time(0, 0))
@@ -123,7 +122,6 @@ async def _get_or_create_discord_user(
         user = await get_user_by_discord_id(db, discord_id)
         if user is None:
             raise
-        user.timezone = timezone
     return user
 
 

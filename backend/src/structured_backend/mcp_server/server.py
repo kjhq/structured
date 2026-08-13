@@ -106,10 +106,6 @@ def _auth_headers_from_mcp_request() -> tuple[str | None, str | None]:
 
 async def _session_and_user():
     secret, discord_id = _auth_headers_from_mcp_request()
-    if not secret:
-        secret = _bot_secret.get()
-    if not discord_id:
-        discord_id = _discord_id.get()
     if not settings.bot_secret_ok(secret):
         raise AppError("unauthorized", "Invalid bot secret", status_code=401)
     if not discord_id:

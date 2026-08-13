@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     bot_api_secret: str = "dev-bot-secret"
     api_key: str = "dev-api-key"
     cors_origins: list[str] = ["http://localhost:3000"]
-    """Comma-separated Discord snowflakes allowed for bot/MCP/link. Empty = allow all (dev only)."""
+    """Comma-separated Discord snowflakes allowed for bot/MCP/link/widget. Empty = deny all when MCP is on."""
     authorized_discord_ids: str = ""
     """When True, mount /mcp on this process. Public REST deploy should set False."""
     enable_mcp: bool = True
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     def is_discord_allowed(self, discord_id: str) -> bool:
         allowed = self.authorized_id_set()
         if allowed is None:
-            return True
+            return not self.enable_mcp
         return discord_id in allowed
 
     def bot_secret_ok(self, provided: str | None) -> bool:

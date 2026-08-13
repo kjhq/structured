@@ -1,25 +1,18 @@
 import { startCompanionLoops, stopCompanionLoops } from "./notifyWorker.js";
-import { unlinkSync, writeFileSync } from "fs";
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
 import { probeMcp } from "./mcp.js";
-
-const READY_PATH = "/tmp/structured-bot-ready";
+import {
+  attachGatewayHealth,
+  clearReady,
+  gracefulShutdown,
+} from "./ready.js";
 
 const bot = createBot();
-
-function clearReady(): void {
-  try {
-    unlinkSync(READY_PATH);
-  } catch {
-    // ignore
-  }
-}
+attachGatewayHealth(bot);
 
 process.on("unhandledRejection", (err) => {
   console.error("unhandledRejection", err);
-  clearReady();
-  process.exit(1);
 });
 process.on("uncaughtException", (err) => {
   console.error("uncaughtException", err);
@@ -27,16 +20,12 @@ process.on("uncaughtException", (err) => {
   process.exit(1);
 });
 process.once("SIGINT", () => {
-  clearReady();
   stopCompanionLoops();
-  bot.destroy();
-  process.exit(0);
+  void gracefulShutdown(bot).finally(() => process.exit(0));
 });
 process.once("SIGTERM", () => {
-  clearReady();
   stopCompanionLoops();
-  bot.destroy();
-  process.exit(0);
+  void gracefulShutdown(bot).finally(() => process.exit(0));
 });
 
 async function main(): Promise<void> {
@@ -44,7 +33,6 @@ async function main(): Promise<void> {
   try {
     const toolCount = await probeMcp();
     console.log(`MCP ready (${toolCount} tools)`);
-    writeFileSync(READY_PATH, "ok");
   } catch (err) {
     clearReady();
     console.error(

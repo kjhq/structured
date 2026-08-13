@@ -15,6 +15,7 @@ export const TEST_ENV: Record<string, string> = {
   LLM_MODEL: "test-model",
   DATA_DIR: join(tmpdir(), `structured-bot-test-${randomUUID()}`),
   NOTIFY_POLL_MS: "0",
+  BOT_READY_PATH: "/tmp/structured-bot-ready-test",
 };
 
 const savedEnv = new Map<string, string | undefined>();

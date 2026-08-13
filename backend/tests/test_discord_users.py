@@ -62,3 +62,29 @@ async def test_prepare_activate_keeps_old_token_until_activate(db_session):
     assert await user_service.get_user_by_discord_and_token(db_session, "444", raw_old) is None
     assert await user_service.get_user_by_discord_and_token(db_session, "444", raw_pending) is not None
     assert user.id  # still same user row after activate
+
+
+@pytest.mark.asyncio
+async def test_prepare_does_not_overwrite_existing_timezone(db_session):
+    user, _ = await user_service.link_widget_token(
+        db_session, discord_id="555", timezone="Asia/Kolkata"
+    )
+    assert user.timezone == "Asia/Kolkata"
+
+    prepared, _, _ = await user_service.prepare_widget_token(
+        db_session, discord_id="555", timezone="UTC"
+    )
+    assert prepared.id == user.id
+    assert prepared.timezone == "Asia/Kolkata"
+
+
+@pytest.mark.asyncio
+async def test_legacy_link_does_not_overwrite_existing_timezone(db_session):
+    user, _ = await user_service.link_widget_token(
+        db_session, discord_id="556", timezone="Europe/London"
+    )
+    relinked, _ = await user_service.link_widget_token(
+        db_session, discord_id="556", timezone="UTC"
+    )
+    assert relinked.id == user.id
+    assert relinked.timezone == "Europe/London"

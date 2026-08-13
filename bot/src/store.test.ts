@@ -12,6 +12,7 @@ import {
   resetDateTracking,
   reloadFromDisk,
   resetMemory,
+  setMaxHistoryKeysForTest,
 } from "./store.js";
 
 describe("store", () => {
@@ -24,6 +25,7 @@ describe("store", () => {
   beforeEach(() => {
     resetAll();
     resetDateTracking();
+    setMaxHistoryKeysForTest(null);
   });
 
   it("load returns empty array for unknown chat", () => {
@@ -99,5 +101,16 @@ describe("store", () => {
     reloadFromDisk();
     assert.equal(load(keyA).length, 1);
     assert.equal(load(keyA)[0].content, "persisted");
+  });
+
+  it("evicts oldest history keys when over the cap", () => {
+    setMaxHistoryKeysForTest(2);
+    push(historyKey("u1", "c1"), { role: "user", content: "one" });
+    push(historyKey("u2", "c2"), { role: "user", content: "two" });
+    push(historyKey("u3", "c3"), { role: "user", content: "three" });
+    assert.deepEqual(load(historyKey("u1", "c1")), []);
+    assert.equal(load(historyKey("u2", "c2"))[0].content, "two");
+    assert.equal(load(historyKey("u3", "c3"))[0].content, "three");
+    setMaxHistoryKeysForTest(null);
   });
 });

@@ -10,6 +10,8 @@ export interface GatingSettings {
 export interface GatingMessage {
   author: { bot: boolean; id: string };
   channelId: string;
+  /** discord.js sets guild to null on DM messages. */
+  guild?: unknown;
   channel?: { isDMBased?: () => boolean };
   mentions?: {
     users?: { has: (id: string) => boolean };
@@ -21,6 +23,7 @@ export interface GatingMessage {
 export type GateResult = "handle" | "silent" | "unauthorized";
 
 function isDm(message: GatingMessage): boolean {
+  if ("guild" in message && message.guild === null) return true;
   try {
     return Boolean(message.channel?.isDMBased?.());
   } catch {
@@ -45,7 +48,9 @@ export function gateMessage(
   if (!isAuthorizedUser(message.author.id)) return "unauthorized";
   if (isDm(message)) return "handle";
 
-  const mode = (settings?.guild_mode ?? "all") as GuildMode;
+  // Deny-by-default: guild NL requires mention/reply unless the user opts out
+  // via /settings guild (all | channel).
+  const mode = (settings?.guild_mode ?? "mention") as GuildMode;
   if (mode === "all") return "handle";
 
   if (mode === "mention") {

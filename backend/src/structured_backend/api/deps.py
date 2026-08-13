@@ -6,6 +6,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structured_backend.db.session import get_db
+from structured_backend.config import settings
 from structured_backend.errors import AppError
 from structured_backend.models.user import User
 from structured_backend.services import users as user_service
@@ -34,6 +35,13 @@ async def get_current_user(
             "unauthorized",
             "Invalid Discord ID or widget token",
             status_code=401,
+        )
+    if not settings.is_discord_allowed(discord_id):
+        raise AppError(
+            "unauthorized",
+            "Discord user not allowlisted",
+            status_code=403,
+            hint="Set AUTHORIZED_DISCORD_IDS on the backend",
         )
     return user
 

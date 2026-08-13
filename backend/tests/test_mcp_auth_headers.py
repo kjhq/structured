@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from structured_backend.config import settings
 from structured_backend.errors import AppError
 from structured_backend.mcp_server import server as mcp_server
 
@@ -53,3 +54,19 @@ async def test_run_sets_is_error_on_app_error(monkeypatch):
     payload = json.loads(result.content[0].text)
     assert payload["error"] is True
     assert payload["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_session_and_user_refuses_missing_request_headers(monkeypatch):
+    def boom():
+        raise RuntimeError("no ctx")
+
+    monkeypatch.setattr(mcp_server.mcp, "get_context", boom)
+    monkeypatch.setattr(settings, "bot_api_secret", "sec")
+    mcp_server.set_bot_secret("sec")
+    mcp_server.set_discord_id("123")
+
+    with pytest.raises(AppError) as exc:
+        async for _ in mcp_server._session_and_user():
+            pass
+    assert exc.value.status_code == 401
