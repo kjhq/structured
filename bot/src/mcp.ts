@@ -2,15 +2,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { config } from "./config.js";
+import { enqueue } from "./queue.js";
 
 type Session = {
   client: Client;
   connecting: Promise<Client> | null;
-  inFlight: number;
 };
 
 /** One MCP session per Discord user — identity headers are immutable per session. */
 const sessions = new Map<string, Session>();
+
+function mcpLockKey(discordUserId: string): string {
+  return `mcp:${discordUserId}`;
+}
 
 const TOOLS_TTL_MS = 60 * 60 * 1000;
 let toolsCache: { tools: McpTool[]; fetchedAt: number } | null = null;
@@ -70,7 +74,6 @@ async function connectUser(discordUserId: string): Promise<Client> {
   const slot: Session = {
     client: null as unknown as Client,
     connecting: null,
-    inFlight: existing?.inFlight ?? 0,
   };
   sessions.set(discordUserId, slot);
 
@@ -134,32 +137,66 @@ export async function listMcpTools(
   ) {
     return toolsCache.tools;
   }
-  const mcp = await getMcpClient(discordUserId);
-  const toolsResponse = await mcp.listTools();
-  const tools: McpTool[] = (toolsResponse.tools ?? []).map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: (t.inputSchema ?? { type: "object", properties: {} }) as Record<
-      string,
-      unknown
-    >,
-  }));
-  toolsCache = { tools, fetchedAt: Date.now() };
-  return tools;
+  return enqueue(mcpLockKey(discordUserId), async () => {
+    if (
+      !force &&
+      toolsCache &&
+      Date.now() - toolsCache.fetchedAt < TOOLS_TTL_MS
+    ) {
+      return toolsCache.tools;
+    }
+    const mcp = await getMcpClient(discordUserId);
+    const toolsResponse = await mcp.listTools();
+    const tools: McpTool[] = (toolsResponse.tools ?? []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: (t.inputSchema ?? { type: "object", properties: {} }) as Record<
+        string,
+        unknown
+      >,
+    }));
+    toolsCache = { tools, fetchedAt: Date.now() };
+    return tools;
+  });
 }
 
-/** Close only this user's session. Safe under concurrent prompts for other users. */
-export async function resetMcpClient(discordUserId: string): Promise<void> {
+async function resetMcpClientUnlocked(discordUserId: string): Promise<void> {
   const prev = sessions.get(discordUserId);
   sessions.delete(discordUserId);
   toolsCache = null;
-  if (prev?.client) {
+  let client = prev?.client;
+  if (!client && prev?.connecting) {
     try {
-      await prev.client.close();
+      client = await prev.connecting;
+    } catch {
+      client = undefined;
+    }
+  }
+  if (client) {
+    try {
+      await client.close();
     } catch {
       // ignore
     }
   }
+}
+
+/** Close only this user's session. Safe under concurrent prompts for other users. */
+export async function resetMcpClient(discordUserId: string): Promise<void> {
+  await enqueue(mcpLockKey(discordUserId), () =>
+    resetMcpClientUnlocked(discordUserId),
+  );
+}
+
+export async function callToolForUser(
+  discordUserId: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<Awaited<ReturnType<Client["callTool"]>>> {
+  return enqueue(mcpLockKey(discordUserId), async () => {
+    const client = await getMcpClient(discordUserId);
+    return client.callTool({ name, arguments: args });
+  });
 }
 
 /** Probe connectivity at startup using the first authorized user id. */

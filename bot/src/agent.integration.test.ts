@@ -326,6 +326,81 @@ describe("agent integration", () => {
     assert.equal(completedCalls, 1);
   });
 
+  it("does not replay mutating tools when the LLM times out after a successful tool call", async () => {
+    setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+
+    let completedCalls = 0;
+    setMcpClientFactoryForTest(async () => {
+      return {
+        connect: async () => {},
+        close: async () => {},
+        listTools: async () => ({
+          tools: [
+            { name: "planner_complete_tasks", inputSchema: { type: "object" } },
+          ],
+        }),
+        callTool: async ({ name }: { name: string }) => {
+          if (name === "planner_complete_tasks") {
+            completedCalls++;
+            return {
+              content: [{ type: "text", text: '{"completed":["task-1"]}' }],
+            };
+          }
+          return { content: [{ type: "text", text: "{}" }] };
+        },
+      } as unknown as Client;
+    });
+
+    setChatImplForTest(async (messages) => {
+      const toolMessage = messages.find((message) => message.role === "tool");
+      if (toolMessage) {
+        const err = new Error("Request timed out");
+        err.name = "TimeoutError";
+        throw err;
+      }
+      return {
+        content: null,
+        tool_calls: [
+          {
+            id: "complete-task",
+            type: "function",
+            function: {
+              name: "planner_complete_tasks",
+              arguments: '{"task_ids":["task-1"]}',
+            },
+          },
+        ],
+      };
+    });
+
+    await assert.rejects(
+      () => prompt("tick off task", FIXTURE_CHANNEL, FIXTURE_USERS.alice),
+      (err: unknown) =>
+        err instanceof Error &&
+        (err.name === "TimeoutError" || /timeout/i.test(err.message)),
+    );
+    assert.equal(completedCalls, 1);
+  });
+
+  it("does not retry the whole prompt on unauthorized errors", async () => {
+    setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+
+    let connects = 0;
+    setMcpClientFactoryForTest(async () => {
+      connects++;
+      const err = new Error("unauthorized");
+      err.name = "UnauthorizedError";
+      throw err;
+    });
+
+    await assert.rejects(
+      () => prompt("hi", FIXTURE_CHANNEL, FIXTURE_USERS.alice),
+      (err: unknown) =>
+        err instanceof Error && /unauthorized/i.test(err.message + err.name),
+    );
+    assert.equal(connects, 1);
+  });
+
   it("clears history when server logical day changes", async () => {
     let today = "2026-05-01";
     setFetchUserContextForTest(async () => ({ timezone: "UTC", today }));
@@ -344,5 +419,33 @@ describe("agent integration", () => {
     assert.equal(history.length, 2);
     assert.equal(history[0].content, "second");
     assert.equal(history[1].content, "day-two");
+  });
+
+  it("does not date-reset history when user context is a fallback", async () => {
+    setFetchUserContextForTest(async () => ({
+      timezone: "UTC",
+      today: "2026-05-01",
+      source: "profile" as const,
+    }));
+    setMcpClientFactoryForTest(async (userId) =>
+      overviewClient(userId, "UTC", "2026-05-01"),
+    );
+    setChatImplForTest(async () => ({ content: "day-one" }));
+
+    const key = historyKey(FIXTURE_USERS.alice, FIXTURE_CHANNEL);
+    await prompt("first", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
+    assert.equal(load(key).length, 2);
+
+    setFetchUserContextForTest(async () => ({
+      timezone: "UTC",
+      today: "2026-05-02",
+      source: "fallback" as const,
+    }));
+    setChatImplForTest(async () => ({ content: "fallback-day" }));
+    await prompt("second", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
+    const history = load(key);
+    assert.equal(history.length, 4);
+    assert.equal(history[0].content, "first");
+    assert.equal(history[3].content, "fallback-day");
   });
 });

@@ -1,8 +1,17 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { enqueue, queueKey } from "./queue.js";
+import {
+  enqueue,
+  queueKey,
+  queueSizeForTest,
+  setQueueIdleMsForTest,
+  resetQueueForTest,
+} from "./queue.js";
 
 describe("queue", () => {
+  beforeEach(() => {
+    resetQueueForTest();
+  });
   it("serializes tasks for the same user+channel", async () => {
     const order: number[] = [];
     const key = queueKey("u1", "1");
@@ -82,5 +91,14 @@ describe("queue", () => {
 
     await assert.rejects(first);
     assert.equal(await second, "ok");
+  });
+
+  it("drops idle queue tails", async () => {
+    setQueueIdleMsForTest(20);
+    const key = queueKey("idle-user", "idle-channel");
+    await enqueue(key, async () => "done");
+    assert.ok(queueSizeForTest() >= 1);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(queueSizeForTest(), 0);
   });
 });

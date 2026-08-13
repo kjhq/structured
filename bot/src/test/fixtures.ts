@@ -9,6 +9,7 @@ export const TEST_ENV: Record<string, string> = {
   TIMEZONE: "UTC",
   LLM_BASE_URL: "https://api.example.com/v1",
   LLM_MODEL: "test-model",
+  BOT_READY_PATH: "/tmp/structured-bot-ready-test",
 };
 
 const savedEnv = new Map<string, string | undefined>();

@@ -29,12 +29,13 @@ MCP: http://localhost:8000/mcp/mcp (pass `X-Bot-Secret` + `X-Discord-Id`)
 
 Root `docker-compose.yml` runs postgres, internal `api` (MCP enabled, not published), Caddy `proxy` on `:8003`/`:8443` (REST `/v1/*` only), and `bot` on the compose network.
 
-Required env: `SECRET_KEY`, `BOT_API_SECRET`. Set `REQUIRE_SECURE_SECRETS=true` in prod. Optional: `AUTHORIZED_DISCORD_IDS`.
+Required env: `SECRET_KEY`, `BOT_API_SECRET`, `AUTHORIZED_DISCORD_IDS` (must include every bot `AUTHORIZED_USER_IDS` snowflake). Set `REQUIRE_SECURE_SECRETS=true` in prod. Empty `AUTHORIZED_DISCORD_IDS` denies all Discord identities while MCP is on.
 
 ```bash
 # from repo root
 export SECRET_KEY=$(openssl rand -hex 32)
 export BOT_API_SECRET=$(openssl rand -hex 32)
+export AUTHORIZED_DISCORD_IDS=your,discord,snowflakes
 docker compose up --build -d
 ```
 

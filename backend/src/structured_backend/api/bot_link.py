@@ -80,9 +80,12 @@ async def bot_link(
     body: LinkBody,
     db: DbSession,
     x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    x_legacy_bot_link: str | None = Header(default=None, alias="X-Legacy-Bot-Link"),
 ) -> dict[str, str]:
-    """Legacy one-shot rotate — prefer /link/prepare + /link/activate."""
+    """Legacy one-shot rotate — tests/admin only. Prefer /link/prepare + /link/activate."""
     _require_bot(x_bot_secret, body.discord_id)
+    if x_legacy_bot_link != "1":
+        raise AppError("not_found", "Not found", status_code=404)
     tz = body.timezone or "UTC"
     validate_timezone(tz)
     user, raw = await user_service.link_widget_token(

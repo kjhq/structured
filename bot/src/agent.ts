@@ -1,4 +1,4 @@
-import { getMcpClient, listMcpTools, resetMcpClient } from "./mcp.js";
+import { getMcpClient, listMcpTools, resetMcpClient, callToolForUser } from "./mcp.js";
 import { chat, type LLMMessage } from "./llm.js";
 import { config } from "./config.js";
 import { load, push, checkDateReset, trim, historyKey } from "./store.js";
@@ -124,9 +124,10 @@ function isRetryableTransportError(err: unknown): boolean {
   };
   const name = e.name ?? e.constructor?.name ?? "";
   const msg = (e.message ?? "").toLowerCase();
+  if (name === "UnauthorizedError" || msg.includes("unauthorized")) {
+    return false;
+  }
   return (
-    name === "UnauthorizedError" ||
-    msg.includes("unauthorized") ||
     msg.includes("econnreset") ||
     msg.includes("socket") ||
     msg.includes("fetch failed") ||
@@ -149,19 +150,12 @@ class ToolCallReconnectFailed extends Error {
 }
 
 async function callToolWithSessionRecovery(
-  client: McpClient,
   discordUserId: string,
   name: string,
   args: Record<string, unknown>,
-): Promise<{
-  client: McpClient;
-  result: Awaited<ReturnType<McpClient["callTool"]>>;
-}> {
+): Promise<Awaited<ReturnType<McpClient["callTool"]>>> {
   try {
-    return {
-      client,
-      result: await client.callTool({ name, arguments: args }),
-    };
+    return await callToolForUser(discordUserId, name, args);
   } catch (err) {
     if (!isStaleMcpSessionError(err)) throw err;
   }
@@ -169,11 +163,7 @@ async function callToolWithSessionRecovery(
   console.error("stale MCP session, reconnecting before retrying tool call");
   try {
     await resetMcpClient(discordUserId);
-    const reconnected = await getMcpClient(discordUserId);
-    return {
-      client: reconnected,
-      result: await reconnected.callTool({ name, arguments: args }),
-    };
+    return await callToolForUser(discordUserId, name, args);
   } catch (err) {
     if (isRetryableTransportError(err)) {
       throw new ToolCallReconnectFailed(err);
@@ -190,18 +180,25 @@ export async function prompt(
   const key =
     channelId !== undefined ? historyKey(discordUserId, channelId) : undefined;
   const userCtx = await fetchUserContext(discordUserId);
-  if (key !== undefined) checkDateReset(key, userCtx.today);
+  if (key !== undefined && userCtx.source !== "fallback") {
+    checkDateReset(key, userCtx.today);
+  }
 
+  const replay = { toolsStarted: 0 };
   try {
-    return await runPrompt(query, discordUserId, channelId, userCtx);
+    return await runPrompt(query, discordUserId, channelId, userCtx, replay);
   } catch (err) {
-    // Stale MCP session / dead transport — reconnect this user once and retry.
-    if (isRetryableTransportError(err)) {
+    // Stale MCP / dead transport before any tool call — reconnect once.
+    if (isRetryableTransportError(err) && replay.toolsStarted === 0) {
       console.error("prompt transport error, reconnecting once:", err);
       await resetMcpClient(discordUserId);
       const retryCtx = await fetchUserContext(discordUserId);
-      if (key !== undefined) checkDateReset(key, retryCtx.today);
-      return await runPrompt(query, discordUserId, channelId, retryCtx);
+      if (key !== undefined && retryCtx.source !== "fallback") {
+        checkDateReset(key, retryCtx.today);
+      }
+      return await runPrompt(query, discordUserId, channelId, retryCtx, {
+        toolsStarted: 0,
+      });
     }
     throw err;
   }
@@ -212,8 +209,9 @@ async function runPrompt(
   discordUserId: string,
   channelId: string | undefined,
   userCtx: UserContext,
+  replay: { toolsStarted: number },
 ): Promise<string> {
-  let mcp = await getMcpClient(discordUserId);
+  await getMcpClient(discordUserId);
   const tools = await listMcpTools(discordUserId);
 
   const key =
@@ -262,18 +260,17 @@ async function runPrompt(
         continue;
       }
       try {
-        const call = await callToolWithSessionRecovery(
-          mcp,
+        replay.toolsStarted++;
+        const result = await callToolWithSessionRecovery(
           discordUserId,
           tc.function.name,
           args,
         );
-        mcp = call.client;
         messages.push({
           role: "tool",
           content: truncateToolResult(
             extractText(
-              call.result as { content: Array<{ type: string; text?: string }> },
+              result as { content: Array<{ type: string; text?: string }> },
             ),
           ),
           tool_call_id: tc.id,
@@ -294,13 +291,15 @@ async function runPrompt(
   }
 
   const final = await chatImpl(messages);
+  const note = `\n\n(Stopped after ${MAX_TOOL_CALLS} tool calls — send another message if you need more.)`;
+  const content = (final.content ?? "Done.") + note;
   if (key !== undefined) {
     push(
       key,
       { role: "user", content: query },
-      { role: "assistant", content: final.content ?? "Done." },
+      { role: "assistant", content },
     );
     trim(key);
   }
-  return final.content ?? "Done.";
+  return content;
 }

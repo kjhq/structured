@@ -2,6 +2,7 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   Partials,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -14,6 +15,14 @@ import { clear, historySize, historyKey } from "./store.js";
 import { enqueue, queueKey } from "./queue.js";
 import { getMcpClient, isMcpConnected, listMcpTools } from "./mcp.js";
 import { fetchUserContext } from "./userContext.js";
+
+type PromptFn = typeof prompt;
+let promptImpl: PromptFn = prompt;
+
+/** Test hook — swap planner prompt without Discord or LLM. */
+export function setPromptForTest(fn: PromptFn | null): void {
+  promptImpl = fn ?? prompt;
+}
 
 /** Discord message limit is 2000 chars. */
 const DISCORD_CHUNK = 1900;
@@ -100,11 +109,20 @@ async function unauthorizedReply(
   target: ChatInputCommandInteraction | Message,
 ): Promise<void> {
   if ("reply" in target && "commandName" in target) {
-    await target.reply({ content: "Unauthorized.", ephemeral: true });
+    await target.reply({
+      content: "Unauthorized.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if ("guild" in target && target.guild) {
     return;
   }
   if ("reply" in target) {
-    await target.reply("Unauthorized.");
+    await target.reply({
+      content: "Unauthorized.",
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   }
 }
 
@@ -130,7 +148,6 @@ async function handleStatus(
   return [
     `Timezone: ${timezone}`,
     `Model: ${config.LLM_MODEL}`,
-    `LLM: ${config.LLM_BASE_URL}`,
     `MCP connected: ${isMcpConnected(discordUserId) ? "yes" : "no"}`,
     `MCP tools: ${toolCount}`,
     `History messages: ${historySize(key)}`,
@@ -138,7 +155,7 @@ async function handleStatus(
 }
 
 export async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const base = config.API_BASE_URL.replace(/\/$/, "");
 
   // Two-phase: prepare pending token, DM it, then activate (invalidate old).
@@ -245,7 +262,7 @@ async function handlePrompt(
     }, 8000);
 
     try {
-      const result = await prompt(text, channelId, discordUserId);
+      const result = await promptImpl(text, channelId, discordUserId);
       await replySafe(channel, result);
     } catch (err) {
       console.error("prompt failed", err);
@@ -279,32 +296,65 @@ async function handleSlashCommand(
 
   switch (interaction.commandName) {
     case "help":
-      await interaction.reply(HELP_TEXT);
+      await interaction.reply({
+        content: HELP_TEXT,
+        flags: MessageFlags.Ephemeral,
+      });
       break;
     case "link":
     case "relink":
       await handleLink(interaction);
       break;
     case "timezone": {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const ctx = await fetchUserContext(userId);
-      await interaction.reply(
+      await interaction.editReply(
         `Your server timezone is \`${ctx.timezone}\` (logical today: ${ctx.today}). ` +
           `Bot default for new users on /link is \`${config.TIMEZONE}\`.`,
       );
       break;
     }
-    case "clear":
-      clear(historyKey(userId, channelId));
-      await interaction.reply("Conversation history cleared.");
+    case "clear": {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await enqueue(queueKey(userId, channelId), async () => {
+        clear(historyKey(userId, channelId));
+      });
+      await interaction.editReply("Conversation history cleared.");
       break;
+    }
     case "status": {
-      await interaction.deferReply();
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await interaction.editReply(await handleStatus(userId, channelId));
       break;
     }
     default:
       await interaction.reply("Unknown command.");
   }
+}
+
+function addressedToBot(message: Message): boolean {
+  if (!message.guild) return true;
+  const me = message.client.user;
+  if (!me) return false;
+  if (message.mentions.users.has(me.id)) return true;
+  return message.mentions.repliedUser?.id === me.id;
+}
+
+async function addressedToBotAsync(message: Message): Promise<boolean> {
+  if (addressedToBot(message)) return true;
+  if (!message.guild || !message.reference?.messageId) return false;
+  const me = message.client.user;
+  if (!me) return false;
+  try {
+    const ref = await message.fetchReference();
+    return ref.author.id === me.id;
+  } catch {
+    return false;
+  }
+}
+
+function stripBotMention(text: string, botId: string): string {
+  return text.replace(new RegExp(`<@!?${botId}>`, "g"), "").trim();
 }
 
 async function handleMessage(message: Message): Promise<void> {
@@ -314,8 +364,14 @@ async function handleMessage(message: Message): Promise<void> {
     await unauthorizedReply(message);
     return;
   }
+  if (!(await addressedToBotAsync(message))) return;
 
-  const text = message.content.trim();
+  let text = message.content.trim();
+  const me = message.client.user;
+  if (me && message.guild) {
+    text = stripBotMention(text, me.id);
+    if (!text) return;
+  }
   const channel = message.channel;
   if (!channel.isTextBased()) return;
 
@@ -357,7 +413,7 @@ export function registerBotHandlers(client: Client): void {
         : interaction.reply.bind(interaction);
       await reply({
         content: "Something went wrong. Try again.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
   });

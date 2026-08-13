@@ -10,6 +10,7 @@ import {
   historyKey,
   checkDateReset,
   resetDateTracking,
+  setMaxHistoryKeysForTest,
 } from "./store.js";
 
 describe("store", () => {
@@ -22,6 +23,7 @@ describe("store", () => {
   beforeEach(() => {
     resetAll();
     resetDateTracking();
+    setMaxHistoryKeysForTest(null);
   });
 
   it("load returns empty array for unknown chat", () => {
@@ -81,5 +83,16 @@ describe("store", () => {
     assert.equal(reset, true);
     assert.deepEqual(load(keyA), []);
     assert.equal(load(keyB).length, 0);
+  });
+
+  it("evicts oldest history keys when over the cap", () => {
+    setMaxHistoryKeysForTest(2);
+    push(historyKey("u1", "c1"), { role: "user", content: "one" });
+    push(historyKey("u2", "c2"), { role: "user", content: "two" });
+    push(historyKey("u3", "c3"), { role: "user", content: "three" });
+    assert.deepEqual(load(historyKey("u1", "c1")), []);
+    assert.equal(load(historyKey("u2", "c2"))[0].content, "two");
+    assert.equal(load(historyKey("u3", "c3"))[0].content, "three");
+    setMaxHistoryKeysForTest(null);
   });
 });
