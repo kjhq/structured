@@ -24,3 +24,7 @@ backend/uv.lock
 # os
 .DS_Store
 *.pyc
+
+# ios
+ios/.build/
+ios/.swiftpm/

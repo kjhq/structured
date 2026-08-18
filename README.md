@@ -6,7 +6,8 @@ Self-hosted task planner — replaces Structured.app MCP.
 structured/
 ├── backend/   FastAPI + Postgres (+ MCP /mcp)
 ├── bot/       Discord bot → our /mcp + API key
-└── widget/    Android widget → our /v1 REST + API key
+├── widget/    Android widget → our /v1 REST + API key
+└── ios/       iOS widget → same /v1 REST + API key
 ```
 
 ## Backend
@@ -37,12 +38,23 @@ cp .env.example .env   # set STRUCTURED_API_KEY + Discord/LLM
 npm install && npm run dev
 ```
 
-## Widget
+## Widget (Android)
 
-Paste backend URL (`http://10.0.2.2:8000` on emulator) + API key in the app. No Structured OAuth.
+Paste backend URL (`http://10.0.2.2:8000` on emulator) + Discord `/link` token in the app. No Structured OAuth.
+
+## Widget (iOS)
+
+Open `ios/StructuredWidget.xcodeproj` on a Mac. Paste backend URL (`http://127.0.0.1:8003` on Simulator) + Discord `/link` token. See [ios/README.md](ios/README.md).
+
+Core display logic is Foundation-only and can be tested without Xcode:
+
+```bash
+cd ios && swift test
+```
 
 ## Status
 
 - [x] Backend REST + open backlog + recurrence + MCP
 - [x] Bot migrated off Structured OAuth
 - [x] Widget migrated to REST
+- [x] iOS WidgetKit companion

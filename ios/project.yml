@@ -1,0 +1,72 @@
+name: StructuredWidget
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+packages:
+  StructuredCore:
+    path: .
+targets:
+  StructuredWidget:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    resources:
+      - App/Assets.xcassets
+    info:
+      path: App/Info.plist
+    entitlements:
+      path: App/StructuredWidget.entitlements
+    dependencies:
+      - package: StructuredCore
+        product: StructuredCore
+      - target: StructuredWidgetExtension
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.structuredwidget
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/StructuredWidget.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+  StructuredWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - WidgetExtension
+      - Shared
+    resources:
+      - WidgetExtension/Assets.xcassets
+    info:
+      path: WidgetExtension/Info.plist
+    entitlements:
+      path: WidgetExtension/StructuredWidgetExtension.entitlements
+    dependencies:
+      - package: StructuredCore
+        product: StructuredCore
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.structuredwidget.widget
+        INFOPLIST_FILE: WidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: WidgetExtension/StructuredWidgetExtension.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+        APPLICATION_EXTENSION_API_ONLY: YES
+schemes:
+  StructuredWidget:
+    build:
+      targets:
+        StructuredWidget: all
+        StructuredWidgetExtension: all
