@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -101,16 +101,15 @@ class TaskService:
             raise
         return await self.get(user, task.id)  # type: ignore[return-value]
 
-    async def get(self, user: User, task_id: uuid.UUID) -> Task | None:
-        result = await self.db.execute(
+    async def get(self, user: User, task_id: uuid.UUID, *, include_deleted: bool = False) -> Task | None:
+        stmt = (
             select(Task)
             .options(selectinload(Task.alerts))
-            .where(
-                Task.id == task_id,
-                Task.user_id == user.id,
-                Task.deleted_at.is_(None),
-            )
+            .where(Task.id == task_id, Task.user_id == user.id)
         )
+        if not include_deleted:
+            stmt = stmt.where(Task.deleted_at.is_(None))
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list_inbox(self, user: User) -> list[Task]:
@@ -199,6 +198,7 @@ class TaskService:
             raise AppError("not_found", "Task not found", status_code=404)
 
         payload = data.model_dump(exclude_unset=True)
+        alerts = payload.pop("alerts", None)
         day = payload.get("day", task.day)
         start_time = payload.get("start_time", task.start_time)
         is_all_day = payload.get("is_all_day", task.is_all_day)
@@ -214,6 +214,10 @@ class TaskService:
 
         for key, value in payload.items():
             setattr(task, key, value)
+        if alerts is not None:
+            task.alerts.clear()
+            for a in data.alerts or []:
+                task.alerts.append(Alert(kind=a.kind, offset_minutes=a.offset_minutes))
         if "day" in payload and payload["day"] is None:
             task.is_all_day = False
             task.start_time = None
@@ -258,6 +262,21 @@ class TaskService:
             await self.db.commit()
         else:
             await self.db.flush()
+
+    async def restore(self, user: User, task_id: uuid.UUID) -> Task:
+        task = await self.get(user, task_id, include_deleted=True)
+        if task is None or task.deleted_at is None:
+            raise AppError("not_found", "Task not found", status_code=404)
+        if utcnow() - task.deleted_at > timedelta(minutes=5):
+            raise AppError(
+                "undo_expired",
+                "Undo window expired",
+                hint="Create it again",
+            )
+        task.deleted_at = None
+        task.updated_at = utcnow()
+        await self.db.commit()
+        return await self.get(user, task_id)  # type: ignore[return-value]
 
     async def _by_client_request(self, user_id: uuid.UUID, client_request_id: str) -> Task | None:
         result = await self.db.execute(

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from structured_backend.schemas.task import AlertCreate, AlertRead
+
 
 class Freq(str, Enum):
     daily = "daily"
@@ -25,6 +27,7 @@ class SeriesCreate(BaseModel):
     is_all_day: bool = False
     color: str | None = None
     symbol: str | None = None
+    alerts: list[AlertCreate] = Field(default_factory=list)
 
 
 class SeriesUpdate(BaseModel):
@@ -39,6 +42,7 @@ class SeriesUpdate(BaseModel):
     is_all_day: bool | None = None
     color: str | None = None
     symbol: str | None = None
+    alerts: list[AlertCreate] | None = None
 
 
 class SeriesRead(BaseModel):
@@ -58,6 +62,7 @@ class SeriesRead(BaseModel):
     color: str | None
     symbol: str | None
     timezone: str
+    alerts: list[AlertRead] = Field(default_factory=list)
 
 
 class ExceptionCreate(BaseModel):
@@ -84,3 +89,4 @@ class OccurrenceRead(BaseModel):
     symbol: str | None
     notes: str | None = None
     is_occurrence: bool = True
+    alerts: list[AlertRead] = Field(default_factory=list)

@@ -46,3 +46,4 @@ Paste backend URL (`http://10.0.2.2:8000` on emulator) + API key in the app. No 
 - [x] Backend REST + open backlog + recurrence + MCP
 - [x] Bot migrated off Structured OAuth
 - [x] Widget migrated to REST
+- [x] Discord companion: slash views, buttons, alerts, capture

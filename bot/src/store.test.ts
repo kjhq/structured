@@ -10,6 +10,7 @@ import {
   historyKey,
   checkDateReset,
   resetDateTracking,
+  reloadFromDisk,
 } from "./store.js";
 
 describe("store", () => {
@@ -81,5 +82,12 @@ describe("store", () => {
     assert.equal(reset, true);
     assert.deepEqual(load(keyA), []);
     assert.equal(load(keyB).length, 0);
+  });
+
+  it("reloadFromDisk restores persisted history", () => {
+    push(keyA, { role: "user", content: "persisted" });
+    reloadFromDisk();
+    assert.equal(load(keyA).length, 1);
+    assert.equal(load(keyA)[0].content, "persisted");
   });
 });

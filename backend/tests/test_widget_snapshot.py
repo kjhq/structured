@@ -1,8 +1,13 @@
 import pytest
+from datetime import datetime, timezone
 
 
 @pytest.mark.asyncio
-async def test_widget_snapshot_due_includes_missed_recurrence(client, api_headers):
+async def test_widget_snapshot_due_includes_missed_recurrence(client, api_headers, monkeypatch):
+    frozen = datetime(2026, 7, 30, 4, 30, tzinfo=timezone.utc)  # 10:00 IST Jul 30
+    monkeypatch.setattr("structured_backend.timeutil.utcnow", lambda: frozen)
+    monkeypatch.setattr("structured_backend.services.widget_snapshot.utcnow", lambda: frozen)
+
     # Weekly Thursday series starting Jul 16 — Jul 23 missed before "today" Jul 30
     series = await client.post(
         "/v1/series",

@@ -11,6 +11,7 @@ from structured_backend.main import app as fastapi_app
 from structured_backend.models import (  # noqa: F401
     Alert,
     ApiKey,
+    NotificationDelivery,
     Series,
     SeriesCompletion,
     SeriesException,

@@ -87,6 +87,9 @@ def _occ_to_item(o) -> TimelineItem:
         symbol=o.symbol,
         is_occurrence=True,
         series_id=o.series_id,
+        alerts=[
+            {"kind": a.kind, "offset_minutes": a.offset_minutes} for a in (o.alerts or [])
+        ],
     )
 
 

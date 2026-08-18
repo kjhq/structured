@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from structured_backend.db.base import Base
 
 if TYPE_CHECKING:
+    from structured_backend.models.alert import Alert
     from structured_backend.models.user import User
 
 
@@ -46,6 +47,7 @@ class Series(Base):
     completions: Mapped[list[SeriesCompletion]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
+    alerts: Mapped[list[Alert]] = relationship(back_populates="series", cascade="all, delete-orphan")
 
 
 class SeriesException(Base):
