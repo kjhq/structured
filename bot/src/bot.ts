@@ -57,6 +57,7 @@ import {
   transcribeAudio,
   transcribeEnabled,
   visionEnabled,
+  captureDecision,
 } from "./capture.js";
 import { notifyStatusLine } from "./notifyWorker.js";
 
@@ -434,7 +435,7 @@ async function handlePrompt(
   });
 }
 
-async function handleView(
+export async function handleView(
   interaction: ChatInputCommandInteraction,
   which: "today" | "inbox" | "open" | "week",
 ): Promise<void> {
@@ -683,7 +684,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     return;
   }
   const parsed = parseCustomId(interaction.customId);
-  if (!parsed || parsed.op === "ok" || parsed.op === "x") {
+  if (!parsed) {
     await interaction.reply({ content: "Unknown button.", ephemeral: true });
     return;
   }
@@ -795,13 +796,25 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
 
   const images = [...message.attachments.values()].filter(isImageAttachment);
   const voices = [...message.attachments.values()].filter(isVoiceAttachment);
+  const decision = captureDecision({
+    hasImage: images.length > 0,
+    hasVoice: voices.length > 0,
+    captureImages: settings?.capture_images !== false,
+    captureVoice: settings?.capture_voice !== false,
+    visionOn: visionEnabled(),
+    transcribeOn: transcribeEnabled(),
+  });
 
-  if (images.length > 0) {
-    if (settings && settings.capture_images === false) return;
-    if (!visionEnabled()) {
-      await replySafe(channel, "Image capture is off (no vision model). Paste the list as text.");
-      return;
-    }
+  if (decision === "image-notice") {
+    await replySafe(channel, "Image capture is off (no vision model). Paste the list as text.");
+    return;
+  }
+  if (decision === "voice-notice") {
+    await replySafe(channel, "Voice capture is off.");
+    return;
+  }
+
+  if (decision === "image") {
     if ("sendTyping" in channel) channel.sendTyping().catch(() => {});
     try {
       const ctx = await fetchUserContext(message.author.id);
@@ -842,12 +855,7 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
     return;
   }
 
-  if (voices.length > 0) {
-    if (settings && settings.capture_voice === false) return;
-    if (!transcribeEnabled()) {
-      await replySafe(channel, "Voice capture is off.");
-      return;
-    }
+  if (decision === "voice") {
     try {
       const transcript = await transcribeAudio(voices[0].url, voices[0].name ?? "voice.ogg");
       if (!transcript) {

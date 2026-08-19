@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { GatewayIntentBits, Events } from "discord.js";
-import { createBot, handleLink, registerBotHandlers } from "./bot.js";
+import { createBot, handleLink, handleView, registerBotHandlers } from "./bot.js";
 import { setFetchUserContextForTest } from "./userContext.js";
 import {
   FIXTURE_USERS,
@@ -135,6 +135,45 @@ describe("bot integration", () => {
       );
       assert.equal(interaction.dmAttempts.length, 1);
       assert.match(interaction.dmAttempts[0], /pending-token/);
+    } finally {
+      globalThis.fetch = baseFetch;
+    }
+  });
+
+  it("/today uses REST views and never calls the LLM", async () => {
+    const fetchCalls: string[] = [];
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      fetchCalls.push(url);
+      if (url.includes("/v1/bot/views/")) {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const edits: unknown[] = [];
+    const interaction = {
+      user: { id: FIXTURE_USERS.alice },
+      deferReply: async () => {},
+      editReply: async (payload: unknown) => {
+        edits.push(payload);
+      },
+    };
+
+    try {
+      await handleView(interaction as never, "today");
+      assert.ok(fetchCalls.some((u) => u.includes("/v1/bot/views/today")));
+      assert.ok(fetchCalls.some((u) => u.includes("/v1/bot/views/inbox")));
+      assert.ok(fetchCalls.some((u) => u.includes("/v1/bot/views/open")));
+      assert.equal(
+        fetchCalls.filter((u) => !u.includes("/v1/bot/views/")).length,
+        0,
+      );
+      assert.equal(edits.length, 1);
     } finally {
       globalThis.fetch = baseFetch;
     }

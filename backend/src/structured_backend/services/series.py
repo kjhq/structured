@@ -119,6 +119,10 @@ class SeriesService:
         self.db = db
 
     async def create(self, user: User, data: SeriesCreate) -> Series:
+        if data.client_request_id:
+            existing = await self._by_client_request(user.id, data.client_request_id)
+            if existing:
+                return existing
         if data.freq == "weekly" and not data.weekdays:
             data = data.model_copy(update={"weekdays": [data.start_day.weekday()]})
         series = Series(
@@ -136,12 +140,28 @@ class SeriesService:
             color=data.color,
             symbol=data.symbol,
             timezone=user.timezone,
+            client_request_id=data.client_request_id,
             alerts=[
                 Alert(kind=a.kind, offset_minutes=a.offset_minutes) for a in data.alerts
             ],
         )
         self.db.add(series)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            if data.client_request_id:
+                existing = await self._by_client_request(user.id, data.client_request_id)
+                if existing:
+                    if _series_payload_mismatch(existing, data):
+                        raise AppError(
+                            "conflict",
+                            "client_request_id already used with different payload",
+                            status_code=409,
+                            hint="Reuse the same title/schedule or use a new client_request_id",
+                        )
+                    return existing
+            raise
         return await self.get(user, series.id)  # type: ignore[return-value]
 
     async def list(self, user: User) -> list[Series]:
@@ -168,6 +188,18 @@ class SeriesService:
         if not include_deleted:
             stmt = stmt.where(Series.deleted_at.is_(None))
         result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _by_client_request(self, user_id: uuid.UUID, client_request_id: str) -> Series | None:
+        result = await self.db.execute(
+            select(Series)
+            .options(selectinload(Series.alerts))
+            .where(
+                Series.user_id == user_id,
+                Series.client_request_id == client_request_id,
+                Series.deleted_at.is_(None),
+            )
+        )
         return result.scalar_one_or_none()
 
     async def update(self, user: User, series_id: uuid.UUID, data: SeriesUpdate) -> Series:
@@ -409,3 +441,32 @@ class SeriesService:
             if prev is None or occ.day > prev.day:
                 latest[occ.series_id] = occ
         return sorted(latest.values(), key=lambda o: o.day, reverse=True)
+
+
+def _series_payload_mismatch(existing: Series, data: SeriesCreate) -> bool:
+    weekdays = data.weekdays
+    if data.freq == "weekly" and not weekdays:
+        weekdays = [data.start_day.weekday()]
+    duration = data.duration_minutes or (30 if not data.is_all_day else None)
+    if existing.title != data.title:
+        return True
+    if existing.freq != data.freq.value:
+        return True
+    if existing.interval != data.interval:
+        return True
+    if _decode_weekdays(existing.weekdays) != weekdays:
+        return True
+    if existing.start_day != data.start_day:
+        return True
+    if existing.end_day != data.end_day:
+        return True
+    if existing.start_time != data.start_time:
+        return True
+    if existing.is_all_day != data.is_all_day:
+        return True
+    if existing.duration_minutes != duration:
+        return True
+    if existing.notes != data.notes:
+        return True
+    return False
+

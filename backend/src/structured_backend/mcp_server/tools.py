@@ -466,6 +466,7 @@ async def planner_create_series(
     color: str | None = None,
     symbol: str | None = None,
     alerts: list[dict[str, Any]] | None = None,
+    client_request_id: str | None = None,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     """Create a recurring rule. weekdays: 0=Mon .. 6=Sun (weekly)."""
@@ -490,6 +491,7 @@ async def planner_create_series(
         is_all_day=is_all_day,
         color=color,
         symbol=symbol,
+        client_request_id=client_request_id,
         alerts=[AlertCreate.model_validate(a) for a in (alerts or [])],
     )
     series = await SeriesService(db).create(user, data)

@@ -6,6 +6,7 @@ import {
   visionEnabled,
   transcribeEnabled,
   jumpNotes,
+  captureDecision,
 } from "./capture.js";
 import { installTestEnv } from "./test/fixtures.js";
 
@@ -43,5 +44,47 @@ describe("capture", () => {
     const tasks = Array.from({ length: 12 }, (_, i) => ({ title: `T${i}` }));
     const parsed = parseVisionJson(JSON.stringify({ tasks }));
     assert.equal(parsed.length, 12);
+  });
+
+  it("captureDecision ignores attachments when capture is off", () => {
+    assert.equal(
+      captureDecision({
+        hasImage: true,
+        hasVoice: true,
+        captureImages: false,
+        captureVoice: false,
+        visionOn: true,
+        transcribeOn: true,
+      }),
+      "text",
+    );
+  });
+
+  it("captureDecision uses image-notice when vision is unset", () => {
+    assert.equal(
+      captureDecision({
+        hasImage: true,
+        hasVoice: false,
+        captureImages: true,
+        captureVoice: true,
+        visionOn: false,
+        transcribeOn: false,
+      }),
+      "image-notice",
+    );
+  });
+
+  it("captureDecision uses voice-notice when transcribe is unset", () => {
+    assert.equal(
+      captureDecision({
+        hasImage: false,
+        hasVoice: true,
+        captureImages: true,
+        captureVoice: true,
+        visionOn: false,
+        transcribeOn: false,
+      }),
+      "voice-notice",
+    );
   });
 });

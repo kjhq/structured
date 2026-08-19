@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import contextvars
+import json
 from collections.abc import Awaitable, Callable
 from datetime import date, time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from structured_backend.config import settings
@@ -54,6 +56,17 @@ mcp = FastMCP(
     ),
     transport_security=_mcp_transport_security,
 )
+
+# Error payloads ({error: true}) must not be validated against success output schemas.
+_orig_tool = mcp.tool
+
+
+def _tool(*args: Any, **kwargs: Any):
+    kwargs.setdefault("structured_output", False)
+    return _orig_tool(*args, **kwargs)
+
+
+mcp.tool = _tool  # type: ignore[method-assign]
 
 _bot_secret: contextvars.ContextVar[str | None] = contextvars.ContextVar("bot_secret", default=None)
 _discord_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("discord_id", default=None)
@@ -146,13 +159,23 @@ def _time(value: str | None) -> time | None:
     return time.fromisoformat(value) if value else None
 
 
-async def _run(fn: Callable[..., Awaitable[dict[str, Any]]], **kwargs: Any) -> dict[str, Any]:
+def _tool_result(payload: dict[str, Any]) -> CallToolResult:
+    text = json.dumps(payload, default=str)
+    is_error = payload.get("error") is True
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structuredContent=payload,
+        isError=is_error,
+    )
+
+
+async def _run(fn: Callable[..., Awaitable[dict[str, Any]]], **kwargs: Any) -> CallToolResult:
     try:
         async for db, user in _session_and_user():
-            return await fn(db, user, **kwargs)
+            return _tool_result(await fn(db, user, **kwargs))
     except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+        return _tool_result(_error(err))
+    return _tool_result({"error": True, "message": "no session"})
 
 
 @mcp.tool(name="planner_get_overview")
@@ -333,7 +356,6 @@ async def planner_create_series(
     response_format: str = "concise",
 ) -> dict[str, Any]:
     """Create recurring series. freq=daily|weekly|monthly|yearly. weekdays 0=Mon..6=Sun for weekly. Alerts only for remind/ping."""
-    _ = client_request_id  # reserved; series rows do not store Discord idempotency keys
     return await _run(
         planner.planner_create_series,
         title=title,
@@ -349,6 +371,7 @@ async def planner_create_series(
         color=color,
         symbol=symbol,
         alerts=alerts,
+        client_request_id=client_request_id,
         response_format=_fmt(response_format),
     )
 
