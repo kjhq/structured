@@ -1,6 +1,11 @@
 import "dotenv/config";
 import { z } from "zod";
 
+function emptyToUndefined(value: unknown): unknown {
+  if (value === "" || value === undefined || value === null) return undefined;
+  return value;
+}
+
 const schema = z.object({
   DISCORD_BOT_TOKEN: z.string().min(1),
   LLM_API_KEY: z.string().min(1),
@@ -19,6 +24,18 @@ const schema = z.object({
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   MCP_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   MAX_HISTORY_CHARS: z.coerce.number().int().positive().default(256_000),
+  /** Conversation JSON directory. */
+  DATA_DIR: z.string().min(1).default("/app/data"),
+  /** 0 disables the notification worker. Non-zero values are at least 5000ms. */
+  NOTIFY_POLL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(20_000)
+    .transform((n) => (n === 0 ? 0 : Math.max(n, 5_000))),
+  LLM_VISION_MODEL: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  TRANSCRIBE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  TRANSCRIBE_API_KEY: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -30,9 +47,12 @@ if (!parsed.success) {
 export const config = parsed.data;
 export type Config = typeof config;
 
-export function isAuthorizedUser(userId: string): boolean {
-  const ids = config.AUTHORIZED_USER_IDS.split(",")
+export function authorizedUserIds(): string[] {
+  return config.AUTHORIZED_USER_IDS.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return ids.includes(userId);
+}
+
+export function isAuthorizedUser(userId: string): boolean {
+  return authorizedUserIds().includes(userId);
 }

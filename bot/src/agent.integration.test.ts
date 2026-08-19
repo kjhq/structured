@@ -110,6 +110,8 @@ describe("agent integration", () => {
     assert.match(capturedSystem, /2026-03-15/);
     assert.match(capturedSystem, /tick off.*planner_complete_tasks/i);
     assert.match(capturedSystem, /Never tell the user to.*session/i);
+    assert.match(capturedSystem, /Remind vs add/i);
+    assert.match(capturedSystem, /NO alerts/);
     assert.doesNotMatch(capturedSystem, /UTC.*from their server profile/);
   });
 
@@ -325,6 +327,45 @@ describe("agent integration", () => {
     assert.equal(connections, 2);
     assert.equal(completedCalls, 1);
   });
+
+    it("injects client_request_id on create tools", async () => {
+      setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+      const seen: Array<{ name: string; args: Record<string, unknown> }> = [];
+      setMcpClientFactoryForTest(async () => {
+        return {
+          connect: async () => {},
+          close: async () => {},
+          listTools: async () => ({
+            tools: [{ name: "planner_create_task", inputSchema: { type: "object" } }],
+          }),
+          callTool: async ({ name, arguments: args }: { name: string; arguments: Record<string, unknown> }) => {
+            seen.push({ name, args });
+            return { content: [{ type: "text", text: JSON.stringify({ task_id: "t1", title: "X" }) }] };
+          },
+        } as unknown as Client;
+      });
+      setChatImplForTest(async (messages) => {
+        if (messages.some((m) => m.role === "tool")) return { content: "created" };
+        return {
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "planner_create_task",
+                arguments: JSON.stringify({ title: "X" }),
+              },
+            },
+          ],
+        };
+      });
+      const out = await prompt("add X", FIXTURE_CHANNEL, FIXTURE_USERS.alice, {
+        clientRequestId: "discord:msg:99",
+      });
+      assert.equal(out, "created");
+      assert.equal(seen[0]?.args.client_request_id, "discord:msg:99");
+    });
 
   it("clears history when server logical day changes", async () => {
     let today = "2026-05-01";

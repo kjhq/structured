@@ -65,6 +65,10 @@ services:
       MCP_URL: http://api:8000/mcp/mcp
       API_BASE_URL: http://api:8000
       BOT_API_SECRET: ${BOT_API_SECRET:?BOT_API_SECRET must be set}
+      DATA_DIR: /app/data
+      NOTIFY_POLL_MS: ${NOTIFY_POLL_MS:-20000}
+    volumes:
+      - structured_bot_data:/app/data
     depends_on:
       api:
         condition: service_healthy
@@ -78,3 +82,4 @@ services:
 volumes:
   structured_postgres_data:
   structured_caddy_data:
+  structured_bot_data:

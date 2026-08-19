@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     max_range_days: int = 366
     """Max task_ids in a single batch request."""
     max_batch_size: int = 100
+    """Max notification rows claimed per due poll."""
+    notification_claim_limit: int = 50
 
     @field_validator("bot_api_secret", "secret_key")
     @classmethod
