@@ -68,10 +68,12 @@ async def _bot_user(db, secret: str | None, discord_id: str | None):
 async def notifications_due(
     db: DbSession,
     x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
-    limit: int = 50,
+    limit: int | None = None,
 ) -> dict:
     _bot_secret(x_bot_secret)
     nsvc = NotificationService(db)
+    if limit is None:
+        limit = settings.notification_claim_limit
     from structured_backend.models.user import User
     from sqlalchemy import select
 

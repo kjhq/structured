@@ -88,6 +88,10 @@ def upgrade() -> None:
         )
         op.create_index("ix_notification_deliveries_user_id", "notification_deliveries", ["user_id"])
         op.create_index("ix_notification_deliveries_fire_at", "notification_deliveries", ["fire_at"])
+        op.execute(
+            "CREATE INDEX ix_notification_deliveries_due ON notification_deliveries "
+            "(status, fire_at) WHERE status IN ('pending', 'claimed')"
+        )
 
 
 def downgrade() -> None:

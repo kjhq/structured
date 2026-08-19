@@ -196,6 +196,17 @@ class SeriesService:
             raise AppError("not_found", "Series not found", status_code=404)
         series.deleted_at = utcnow()
         await self.db.commit()
+        from structured_backend.services.notifications import NotificationService
+
+        await NotificationService(self.db).skip_pending(
+            user, f"alert:occ:{series_id}:", reason="deleted"
+        )
+
+    async def get_deleted(self, user: User, series_id: uuid.UUID) -> Series | None:
+        series = await self.get(user, series_id, include_deleted=True)
+        if series is None or series.deleted_at is None:
+            return None
+        return series
 
     async def restore(self, user: User, series_id: uuid.UUID) -> Series:
         series = await self.get(user, series_id, include_deleted=True)
@@ -257,6 +268,12 @@ class SeriesService:
         self.db.add(exc)
         series.exceptions.append(exc)
         await self.db.commit()
+        if data.kind == "skip":
+            from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+            await NotificationService(self.db).skip_pending(
+                user, occ_source_prefix(series_id, data.occurrence_day), reason="skipped"
+            )
         return await self.get(user, series_id)  # type: ignore[return-value]
 
     async def complete_occurrence(self, user: User, series_id: uuid.UUID, day: date) -> None:
@@ -277,6 +294,9 @@ class SeriesService:
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
+        from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+        await NotificationService(self.db).skip_pending(user, occ_source_prefix(series_id, day))
 
     async def uncomplete_occurrence(self, user: User, series_id: uuid.UUID, day: date) -> None:
         series = await self.get(user, series_id)

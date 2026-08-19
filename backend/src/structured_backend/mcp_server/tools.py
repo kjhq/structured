@@ -176,6 +176,25 @@ async def planner_find_tasks(
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     svc = TaskService(db)
+    exclusive = sum(
+        [
+            bool(inbox),
+            bool(open_backlog),
+            day is not None,
+            day_from is not None or day_to is not None,
+        ]
+    )
+    if exclusive > 1:
+        raise AppError(
+            "validation_error",
+            "inbox, open_backlog, day, and day_from/day_to are mutually exclusive",
+            hint="Use one of inbox, open_backlog, a single day, or a day_from+day_to range",
+        )
+    if (day_from is None) != (day_to is None):
+        raise AppError(
+            "validation_error",
+            "day_from and day_to must be provided together",
+        )
     if inbox:
         tasks = await svc.list_inbox(user)
         return {"tasks": [format_task(t, response_format) for t in tasks]}

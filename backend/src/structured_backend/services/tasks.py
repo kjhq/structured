@@ -240,6 +240,9 @@ class TaskService:
                 await self.db.commit()
             else:
                 await self.db.flush()
+        from structured_backend.services.notifications import NotificationService, task_source_prefix
+
+        await NotificationService(self.db).skip_pending(user, task_source_prefix(task_id))
         return await self.get(user, task_id)  # type: ignore[return-value]
 
     async def uncomplete(self, user: User, task_id: uuid.UUID) -> Task:
@@ -262,6 +265,17 @@ class TaskService:
             await self.db.commit()
         else:
             await self.db.flush()
+        from structured_backend.services.notifications import NotificationService, task_source_prefix
+
+        await NotificationService(self.db).skip_pending(
+            user, task_source_prefix(task_id), reason="deleted"
+        )
+
+    async def get_deleted(self, user: User, task_id: uuid.UUID) -> Task | None:
+        task = await self.get(user, task_id, include_deleted=True)
+        if task is None or task.deleted_at is None:
+            return None
+        return task
 
     async def restore(self, user: User, task_id: uuid.UUID) -> Task:
         task = await self.get(user, task_id, include_deleted=True)

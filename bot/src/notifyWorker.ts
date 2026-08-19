@@ -41,9 +41,9 @@ async function sendOne(client: Client, item: DueItem): Promise<void> {
     let user: User;
     try {
       user = await client.users.fetch(discordId);
-    } catch (err) {
-      await failDelivery(item.delivery_id, "discord_4xx").catch(() => {});
-      throw err;
+    } catch {
+      // Leave claimed so the 60s lease retries (spec 7.6 discord_4xx).
+      return;
     }
     const id = item.occurrence_id || item.task_id;
     const components = rowsFromNotifyButtons(item.buttons, item.task_id, item.occurrence_id);
@@ -56,13 +56,14 @@ async function sendOne(client: Client, item: DueItem): Promise<void> {
       await ackDelivery(item.delivery_id, msg.id);
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
-      const reason =
-        /50007|Cannot send messages to this user|Cannot send messages/i.test(text)
-          ? "dms_closed"
-          : "discord_4xx";
-      await failDelivery(item.delivery_id, reason).catch(() => {});
-      if (reason === "dms_closed") return;
-      throw err;
+      const dmsClosed =
+        /50007|403|400|Cannot send messages to this user|Cannot send messages|Missing Access/i.test(
+          text,
+        );
+      if (dmsClosed) {
+        await failDelivery(item.delivery_id, "dms_closed").catch(() => {});
+      }
+      // Other Discord 4xx: leave claimed so lease expiry retries.
     }
     void id;
   });

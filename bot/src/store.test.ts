@@ -11,6 +11,7 @@ import {
   checkDateReset,
   resetDateTracking,
   reloadFromDisk,
+  resetMemory,
 } from "./store.js";
 
 describe("store", () => {
@@ -86,6 +87,15 @@ describe("store", () => {
 
   it("reloadFromDisk restores persisted history", () => {
     push(keyA, { role: "user", content: "persisted" });
+    reloadFromDisk();
+    assert.equal(load(keyA).length, 1);
+    assert.equal(load(keyA)[0].content, "persisted");
+  });
+
+  it("survives in-memory reset then reloadFromDisk (process restart)", () => {
+    push(keyA, { role: "user", content: "persisted" });
+    resetMemory();
+    assert.equal(load(keyA).length, 0);
     reloadFromDisk();
     assert.equal(load(keyA).length, 1);
     assert.equal(load(keyA)[0].content, "persisted");

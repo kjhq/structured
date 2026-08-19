@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structured_backend.errors import AppError
 from structured_backend.models.user import User
 from structured_backend.schemas.series import ExceptionCreate
-from structured_backend.schemas.task import TaskCreate, TaskUpdate
+from structured_backend.schemas.task import AlertCreate, TaskCreate, TaskUpdate
 from structured_backend.services.series import SeriesService, parse_occurrence_id
 from structured_backend.services.tasks import TaskService
 from structured_backend.timeutil import user_local_now, user_today
@@ -61,8 +61,15 @@ async def snooze_item(
                     notes=occ.notes,
                     color=occ.color,
                     symbol=occ.symbol,
+                    alerts=[
+                        AlertCreate(kind=a.kind, offset_minutes=a.offset_minutes)
+                        for a in (occ.alerts or [])
+                    ],
                 ),
             )
+            from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+            await NotificationService(db).drop_pending(user, occ_source_prefix(series_id, day))
             return {
                 "task_id": str(cloned.id),
                 "title": cloned.title,
@@ -88,6 +95,9 @@ async def snooze_item(
                 is_all_day=is_all_day,
             ),
         )
+        from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+        await NotificationService(db).drop_pending(user, occ_source_prefix(series_id, day))
         return {
             "task_id": item_id,
             "day": day.isoformat(),
@@ -106,6 +116,9 @@ async def snooze_item(
             )
         else:
             updated = await task_svc.update(user, task.id, TaskUpdate(day=new_day))
+        from structured_backend.services.notifications import NotificationService, task_source_prefix
+
+        await NotificationService(db).drop_pending(user, task_source_prefix(updated.id))
         return {
             "task_id": str(updated.id),
             "title": updated.title,
@@ -131,6 +144,9 @@ async def snooze_item(
             task.id,
             TaskUpdate(day=new_day, start_time=new_time, is_all_day=False),
         )
+    from structured_backend.services.notifications import NotificationService, task_source_prefix
+
+    await NotificationService(db).drop_pending(user, task_source_prefix(updated.id))
     return {
         "task_id": str(updated.id),
         "title": updated.title,

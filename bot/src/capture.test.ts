@@ -38,4 +38,10 @@ describe("capture", () => {
     assert.equal(tasks[0].title, "Milk");
     assert.deepEqual(parseVisionJson("not json"), []);
   });
+
+  it("keeps more than 10 extracted titles so the bot can report extras", () => {
+    const tasks = Array.from({ length: 12 }, (_, i) => ({ title: `T${i}` }));
+    const parsed = parseVisionJson(JSON.stringify({ tasks }));
+    assert.equal(parsed.length, 12);
+  });
 });

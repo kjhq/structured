@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.sqlite import JSON as SQLITE_JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -16,6 +16,13 @@ class NotificationDelivery(Base):
     __tablename__ = "notification_deliveries"
     __table_args__ = (
         UniqueConstraint("user_id", "source_key", name="uq_notification_user_source"),
+        Index(
+            "ix_notification_deliveries_due",
+            "status",
+            "fire_at",
+            postgresql_where=text("status IN ('pending', 'claimed')"),
+            sqlite_where=text("status IN ('pending', 'claimed')"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

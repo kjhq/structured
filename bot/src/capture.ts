@@ -115,8 +115,7 @@ export function parseVisionJson(text: string): CapturedTask[] {
         is_all_day: Boolean(t.is_all_day),
         notes: typeof t.notes === "string" ? t.notes : undefined,
       }))
-      .filter((t) => t.title.length > 0)
-      .slice(0, 10);
+      .filter((t) => t.title.length > 0);
   } catch {
     return [];
   }

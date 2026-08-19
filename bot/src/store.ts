@@ -55,6 +55,11 @@ export function resetAll(): void {
   persist();
 }
 
+/** Clear in-memory history without touching the JSON file (simulates process exit). */
+export function resetMemory(): void {
+  store.clear();
+}
+
 /** Keep newest messages within MAX_HISTORY_CHARS (no privileged system slot). */
 export function trim(key: string): void {
   const messages = store.get(key);

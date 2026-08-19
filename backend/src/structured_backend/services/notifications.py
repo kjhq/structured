@@ -4,16 +4,18 @@ from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from structured_backend.config import settings
 from structured_backend.errors import AppError
 from structured_backend.models.notification import NotificationDelivery
 from structured_backend.models.user import User
-from structured_backend.services.series import SeriesService, occurrence_id
+from structured_backend.services.series import SeriesService
 from structured_backend.services.tasks import TaskService
-from structured_backend.timeutil import user_today, utcnow, user_local_now
+from structured_backend.timeutil import user_today, utcnow
 
 
 def alert_fire_at(
@@ -68,6 +70,14 @@ def _source_key_alert(kind_id: str, fire_at: datetime) -> str:
     return f"alert:{kind_id}:{stamp}"
 
 
+def task_source_prefix(task_id: UUID | str) -> str:
+    return f"alert:task:{task_id}:"
+
+
+def occ_source_prefix(series_id: UUID | str, day: date) -> str:
+    return f"alert:occ:{series_id}:{day.isoformat()}:"
+
+
 def _embed(title: str, when: str, color: str | None = None, notes: str | None = None) -> dict:
     fields = [{"name": "When", "value": when}]
     if notes:
@@ -115,6 +125,33 @@ class NotificationService:
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
+
+    async def drop_pending(self, user: User, prefix: str) -> None:
+        """Delete pending/claimed rows for a source_key prefix (snooze). Keep delivered."""
+        await self.db.execute(
+            delete(NotificationDelivery).where(
+                NotificationDelivery.user_id == user.id,
+                NotificationDelivery.source_key.startswith(prefix),
+                NotificationDelivery.status.in_(("pending", "claimed")),
+            )
+        )
+        await self.db.commit()
+
+    async def skip_pending(self, user: User, prefix: str, reason: str = "completed") -> None:
+        result = await self.db.execute(
+            select(NotificationDelivery).where(
+                NotificationDelivery.user_id == user.id,
+                NotificationDelivery.source_key.startswith(prefix),
+                NotificationDelivery.status.in_(("pending", "claimed")),
+            )
+        )
+        rows = list(result.scalars().all())
+        if not rows:
+            return
+        for row in rows:
+            row.status = "skipped"
+            row.skip_reason = reason
+        await self.db.commit()
 
     async def enqueue_for_user(self, user: User, now: datetime | None = None) -> None:
         now = now or utcnow()
@@ -168,7 +205,9 @@ class NotificationService:
         await self._enqueue_briefing(user, now, today, "morning", user.briefing_morning_time)
         await self._enqueue_briefing(user, now, today, "evening", user.briefing_evening_time)
         if user.briefing_evening_time is None and user.overdue_enabled:
-            await self._enqueue_briefing(user, now, today, "overdue", time(18, 0))
+            open_tasks = await TaskService(self.db).list_open(user)
+            if open_tasks:
+                await self._enqueue_briefing(user, now, today, "overdue", time(18, 0))
 
     async def _enqueue_alert(
         self,
@@ -195,6 +234,8 @@ class NotificationService:
             offset_minutes=offset_minutes,
         )
         fire_at = defer_through_quiet(user, fire_at)
+        if fire_at > now + timedelta(minutes=15):
+            return
         when = f"{day.isoformat()} {start_time.strftime('%H:%M') if start_time else 'all-day'}"
         payload = {
             "discord_id": user.discord_id,
@@ -233,12 +274,13 @@ class NotificationService:
         fire_at = datetime.combine(today, local_time, tzinfo=tz).astimezone(timezone.utc)
         fire_at = defer_through_quiet(user, fire_at)
         kind = "overdue" if which == "overdue" else f"briefing_{which}"
-        source_key = f"{kind}:{today.isoformat()}" if which != "overdue" else f"overdue:{today.isoformat()}"
-        if which != "overdue":
-            source_key = f"briefing:{which}:{today.isoformat()}"
+        source_key = f"briefing:{which}:{today.isoformat()}" if which != "overdue" else f"overdue:{today.isoformat()}"
         status = "pending"
         skip_reason = None
-        if now - fire_at > timedelta(hours=2):
+        if user_today(user, fire_at) != today:
+            status = "skipped"
+            skip_reason = "missed"
+        elif now - fire_at > timedelta(hours=2):
             status = "skipped"
             skip_reason = "missed"
         title = {
@@ -254,7 +296,7 @@ class NotificationService:
         }
         await self._insert(
             user,
-            kind=payload["kind"],
+            kind=kind,
             source_key=source_key,
             fire_at=fire_at,
             payload=payload,
@@ -262,11 +304,16 @@ class NotificationService:
             skip_reason=skip_reason,
         )
 
-    async def claim_due(self, now: datetime | None = None, limit: int = 50) -> list[NotificationDelivery]:
+    async def claim_due(
+        self, now: datetime | None = None, limit: int | None = None
+    ) -> list[NotificationDelivery]:
         now = now or utcnow()
+        if limit is None:
+            limit = settings.notification_claim_limit
         stale = now - timedelta(seconds=60)
-        result = await self.db.execute(
+        stmt = (
             select(NotificationDelivery)
+            .options(selectinload(NotificationDelivery.user))
             .where(
                 or_(
                     and_(
@@ -284,11 +331,28 @@ class NotificationService:
             .order_by(NotificationDelivery.fire_at.asc())
             .limit(limit)
         )
+        conn = await self.db.connection()
+        if conn.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True)
+        result = await self.db.execute(stmt)
         rows = list(result.scalars().all())
         claimed: list[NotificationDelivery] = []
         for row in rows:
-            catchup = timedelta(minutes=5) if row.kind == "alert" else timedelta(hours=2)
+            user = row.user
             fire_at = _as_utc(row.fire_at)
+            if user is not None and (in_quiet_hours(user, now) or in_quiet_hours(user, fire_at)):
+                deferred = defer_through_quiet(user, fire_at if fire_at > now else now)
+                if row.kind != "alert" and user_today(user, deferred) != user_today(user, fire_at):
+                    row.status = "skipped"
+                    row.skip_reason = "missed"
+                    continue
+                row.fire_at = deferred
+                if deferred > now:
+                    row.status = "pending"
+                    row.claimed_at = None
+                    continue
+                fire_at = deferred
+            catchup = timedelta(minutes=5) if row.kind == "alert" else timedelta(hours=2)
             if now - fire_at > catchup:
                 row.status = "skipped"
                 row.skip_reason = "missed"

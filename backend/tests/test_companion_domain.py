@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta, timezone
+from sqlalchemy import select
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from structured_backend.errors import AppError
 from structured_backend.mcp_server import tools as planner
 from structured_backend.mcp_server.tools import ResponseFormat
+from structured_backend.models.notification import NotificationDelivery
 from structured_backend.schemas.series import ExceptionCreate, Freq, SeriesCreate
 from structured_backend.schemas.task import AlertCreate, TaskCreate, TaskUpdate
 from structured_backend.services import users as user_service
@@ -13,6 +15,7 @@ from structured_backend.services.checklists import toggle_note_item
 from structured_backend.services.notifications import (
     NotificationService,
     alert_fire_at,
+    defer_through_quiet,
     in_quiet_hours,
 )
 from structured_backend.services.schedule import overlaps_on_day, suggest_slots, week_streaks
@@ -444,3 +447,239 @@ async def test_create_idempotent_client_request_id(db_session):
         db_session, user, title="From discord", client_request_id="discord:msg:1"
     )
     assert a["task_id"] == b["task_id"]
+
+
+def test_defer_through_quiet_wraps_overnight():
+    user = type(
+        "U",
+        (),
+        {
+            "timezone": "Asia/Kolkata",
+            "quiet_hours_start": time(22, 0),
+            "quiet_hours_end": time(7, 0),
+        },
+    )()
+    fire = datetime(2026, 8, 18, 23, 0, tzinfo=IST)
+    deferred = defer_through_quiet(user, fire)
+    assert deferred == datetime(2026, 8, 19, 1, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_snooze_deletes_pending_deliveries(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 1, 21, tzinfo=timezone.utc)
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="snooze-pending", timezone="Asia/Kolkata"
+    )
+    task = await TaskService(db_session).create(
+        user,
+        TaskCreate(
+            title="Gym",
+            day=date(2026, 8, 18),
+            start_time=time(7, 0),
+            alerts=[AlertCreate(kind="start", offset_minutes=-10)],
+        ),
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    due = await nsvc.claim_due(now, limit=50)
+    assert len(due) == 1
+    await nsvc.unclaim(due[0].id)
+    await snooze_item(db_session, user, str(task.id), minutes=60)
+    rows = list(
+        (
+            await db_session.execute(
+                select(NotificationDelivery).where(
+                    NotificationDelivery.user_id == user.id,
+                    NotificationDelivery.status.in_(("pending", "claimed")),
+                )
+            )
+        ).scalars()
+    )
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_complete_skips_pending_deliveries(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 1, 21, tzinfo=timezone.utc)
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="complete-pending", timezone="Asia/Kolkata"
+    )
+    task = await TaskService(db_session).create(
+        user,
+        TaskCreate(
+            title="Gym",
+            day=date(2026, 8, 18),
+            start_time=time(7, 0),
+            alerts=[AlertCreate(kind="start", offset_minutes=-10)],
+        ),
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    await TaskService(db_session).complete(user, task.id)
+    due = await nsvc.claim_due(now, limit=50)
+    assert due == []
+    row = (
+        await db_session.execute(
+            select(NotificationDelivery).where(NotificationDelivery.user_id == user.id)
+        )
+    ).scalar_one()
+    assert row.status == "skipped"
+    assert row.skip_reason == "completed"
+
+
+@pytest.mark.asyncio
+async def test_briefing_catchup_within_two_hours(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 2, 30, tzinfo=timezone.utc)  # 08:00 IST; briefing 07:00
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="briefing-catchup", timezone="Asia/Kolkata"
+    )
+    await update_settings(db_session, user, {"briefing_morning_time": time(7, 0)})
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    due = await nsvc.claim_due(now, limit=50)
+    assert len(due) == 1
+    assert due[0].kind == "briefing_morning"
+
+
+@pytest.mark.asyncio
+async def test_briefing_quiet_crossing_logical_day_is_skipped(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 16, 0, tzinfo=timezone.utc)  # 21:30 IST
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="briefing-quiet", timezone="Asia/Kolkata"
+    )
+    await update_settings(
+        db_session,
+        user,
+        {
+            "briefing_evening_time": time(22, 0),
+            "quiet_hours_start": time(21, 0),
+            "quiet_hours_end": time(7, 0),
+        },
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    due = await nsvc.claim_due(now, limit=50)
+    assert due == []
+    row = (
+        await db_session.execute(
+            select(NotificationDelivery).where(
+                NotificationDelivery.user_id == user.id,
+                NotificationDelivery.kind == "briefing_evening",
+            )
+        )
+    ).scalar_one()
+    assert row.status == "skipped"
+    assert row.skip_reason == "missed"
+
+
+@pytest.mark.asyncio
+async def test_overdue_skipped_when_backlog_empty(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 13, 0, tzinfo=timezone.utc)  # 18:30 IST
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="overdue-empty", timezone="Asia/Kolkata"
+    )
+    await update_settings(db_session, user, {"overdue_enabled": True})
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    due = await nsvc.claim_due(now, limit=50)
+    assert due == []
+
+
+@pytest.mark.asyncio
+async def test_alert_lookahead_skips_far_future(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 6, 0, tzinfo=timezone.utc)  # 11:30 IST
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="lookahead-user", timezone="Asia/Kolkata"
+    )
+    await TaskService(db_session).create(
+        user,
+        TaskCreate(
+            title="Tomorrow gym",
+            day=date(2026, 8, 19),
+            start_time=time(7, 0),
+            alerts=[AlertCreate(kind="start", offset_minutes=0)],
+        ),
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    rows = list(
+        (
+            await db_session.execute(
+                select(NotificationDelivery).where(NotificationDelivery.user_id == user.id)
+            )
+        ).scalars()
+    )
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_toggle_note_item_rejects_occurrence(db_session):
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="toggle-occ", timezone="UTC"
+    )
+    series_svc = SeriesService(db_session)
+    series = await series_svc.create(
+        user,
+        SeriesCreate(
+            title="Gym",
+            freq=Freq.weekly,
+            start_day=date(2026, 7, 20),
+            weekdays=[0],
+            start_time=time(7, 0),
+        ),
+    )
+    oid = occurrence_id(series.id, date(2026, 7, 20))
+    with pytest.raises(AppError) as exc:
+        await planner.planner_toggle_note_item(
+            db_session, user, task_id=oid, item_text="milk", checked=True
+        )
+    assert exc.value.code == "validation_error"
+
+
+@pytest.mark.asyncio
+async def test_find_tasks_rejects_inbox_plus_day(db_session):
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="find-exclusive", timezone="UTC"
+    )
+    with pytest.raises(AppError) as exc:
+        await planner.planner_find_tasks(
+            db_session, user, inbox=True, day=date(2026, 8, 18)
+        )
+    assert exc.value.code == "validation_error"
+
+
+@pytest.mark.asyncio
+async def test_delete_skips_pending_deliveries(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 1, 21, tzinfo=timezone.utc)
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="delete-pending", timezone="Asia/Kolkata"
+    )
+    task = await TaskService(db_session).create(
+        user,
+        TaskCreate(
+            title="Gym",
+            day=date(2026, 8, 18),
+            start_time=time(7, 0),
+            alerts=[AlertCreate(kind="start", offset_minutes=-10)],
+        ),
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    await TaskService(db_session).soft_delete(user, task.id)
+    due = await nsvc.claim_due(now, limit=50)
+    assert due == []
+    row = (
+        await db_session.execute(
+            select(NotificationDelivery).where(NotificationDelivery.user_id == user.id)
+        )
+    ).scalar_one()
+    assert row.status == "skipped"
+    assert row.skip_reason == "deleted"
+

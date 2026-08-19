@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   ApplicationCommandType,
   ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   ComponentType,
@@ -460,12 +461,17 @@ async function handleView(
     inbox: "Inbox is empty. Add a title with /add, or chat a reminder.",
     open: "No leftover dated tasks.",
   };
-  const extra =
-    which === "today"
-      ? `inbox/open counts are in /inbox and /open`
-      : which === "inbox"
-        ? "Use /add when: … to schedule, or ask in chat."
-        : undefined;
+  let extra =
+    which === "inbox"
+      ? "Use /add when: … to schedule, or ask in chat."
+      : undefined;
+  if (which === "today") {
+    const [inbox, open] = await Promise.all([
+      getView(interaction.user.id, "inbox"),
+      getView(interaction.user.id, "open"),
+    ]);
+    extra = `inbox ${asItems(inbox.items).length} · open ${asItems(open.items).length}`;
+  }
   const incomplete = items.filter((i) => !i.completed_at).slice(0, 5);
   const rows = incomplete
     .map((i) => itemId(i))
@@ -687,18 +693,26 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       const embeds = interaction.message.embeds.map((e) => {
         const b = EmbedBuilder.from(e);
         if (parsed.op === "c" && b.data.title) b.setTitle(`~~${b.data.title.replace(/~~/g, "")}~~`);
+        if (parsed.op === "u" && b.data.title) b.setTitle(b.data.title.replace(/~~/g, ""));
         return b;
       });
-      const components = interaction.message.components.flatMap((row) => {
-        if (row.type !== ComponentType.ActionRow) return [];
-        const rebuilt = new ActionRowBuilder<ButtonBuilder>();
-        for (const comp of row.components) {
-          if (comp.type === ComponentType.Button) {
-            rebuilt.addComponents(ButtonBuilder.from(comp).setDisabled(true));
+      let components: ActionRowBuilder<ButtonBuilder>[];
+      if (parsed.op === "c" && parsed.id) {
+        components = [itemActionRow(parsed.id, { completed: true, occurrence: parsed.id.startsWith("occ_") })];
+      } else if (parsed.op === "u" && parsed.id) {
+        components = [itemActionRow(parsed.id, { occurrence: parsed.id.startsWith("occ_") })];
+      } else {
+        components = interaction.message.components.flatMap((row) => {
+          if (row.type !== ComponentType.ActionRow) return [];
+          const rebuilt = new ActionRowBuilder<ButtonBuilder>();
+          for (const comp of row.components) {
+            if (comp.type === ComponentType.Button) {
+              rebuilt.addComponents(ButtonBuilder.from(comp).setDisabled(true));
+            }
           }
-        }
-        return rebuilt.components.length ? [rebuilt] : [];
-      });
+          return rebuilt.components.length ? [rebuilt] : [];
+        });
+      }
       await interaction.update({
         embeds,
         components,
@@ -709,7 +723,16 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: msg, ephemeral: true }).catch(() => {});
       }
-      if (/Already gone|Undo expired/.test(msg)) {
+      if (/Undo expired/.test(msg)) {
+        const expired = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId("s1:noop")
+            .setLabel("Undo expired.")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true),
+        );
+        await interaction.message.edit({ components: [expired] }).catch(() => {});
+      } else if (/Already gone/.test(msg)) {
         await interaction.message.edit({ components: [] }).catch(() => {});
       }
     }
@@ -792,8 +815,13 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
         await replySafe(channel, "I couldn’t find tasks in that image.");
         return;
       }
-      const created = await createCapturedTasks(message.author.id, message.id, tasks);
-      const extra = images.length > 1 ? `Used the first image (${images.length} attached).` : "";
+      const overflow = Math.max(0, tasks.length - 10);
+      const limited = tasks.slice(0, 10);
+      const created = await createCapturedTasks(message.author.id, message.id, limited);
+      const bits: string[] = [];
+      if (images.length > 1) bits.push(`Used the first image (${images.length} attached).`);
+      if (overflow > 0) bits.push(`Ignored ${overflow} extra.`);
+      const extra = bits.join(" ");
       if (created.length === 1) {
         const id = itemId(created[0]);
         await replySafe(channel, extra, {
