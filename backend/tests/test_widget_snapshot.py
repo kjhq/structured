@@ -33,6 +33,33 @@ async def test_widget_snapshot_due_includes_missed_recurrence(client, api_header
 
 
 @pytest.mark.asyncio
+async def test_widget_snapshot_occurrence_includes_alerts(client, api_headers, monkeypatch):
+    frozen = datetime(2026, 7, 30, 4, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr("structured_backend.timeutil.utcnow", lambda: frozen)
+    monkeypatch.setattr("structured_backend.services.widget_snapshot.utcnow", lambda: frozen)
+
+    series = await client.post(
+        "/v1/series",
+        headers=api_headers,
+        json={
+            "title": "Gym",
+            "freq": "weekly",
+            "weekdays": [3],
+            "start_day": "2026-07-16",
+            "start_time": "07:00:00",
+            "alerts": [{"kind": "start", "offset_minutes": -10}],
+        },
+    )
+    assert series.status_code == 201
+
+    snap = await client.get("/v1/widget/snapshot", headers=api_headers)
+    assert snap.status_code == 200
+    today_occ = [d for d in snap.json()["today"] if d.get("is_occurrence")]
+    assert today_occ
+    assert today_occ[0]["alerts"] == [{"kind": "start", "offset_minutes": -10}]
+
+
+@pytest.mark.asyncio
 async def test_widget_snapshot_etag(client, api_headers):
     first = await client.get("/v1/widget/snapshot", headers=api_headers)
     etag = first.headers["etag"]

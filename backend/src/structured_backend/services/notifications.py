@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -356,6 +356,24 @@ class NotificationService:
             if now - fire_at > catchup:
                 row.status = "skipped"
                 row.skip_reason = "missed"
+                continue
+            cas = await self.db.execute(
+                update(NotificationDelivery)
+                .where(
+                    NotificationDelivery.id == row.id,
+                    or_(
+                        NotificationDelivery.status == "pending",
+                        and_(
+                            NotificationDelivery.status == "claimed",
+                            NotificationDelivery.claimed_at.is_not(None),
+                            NotificationDelivery.claimed_at < stale,
+                            NotificationDelivery.delivered_at.is_(None),
+                        ),
+                    ),
+                )
+                .values(status="claimed", claimed_at=now)
+            )
+            if cas.rowcount != 1:
                 continue
             row.status = "claimed"
             row.claimed_at = now

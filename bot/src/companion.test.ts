@@ -19,6 +19,11 @@ describe("custom_id", () => {
   it("rejects unknown prefix", () => {
     assert.equal(parseCustomId("x:c:1"), null);
   });
+
+  it("rejects draft ok/x ops", () => {
+    assert.equal(parseCustomId("s1:ok:draft1"), null);
+    assert.equal(parseCustomId("s1:x:draft1"), null);
+  });
 });
 
 describe("parseWhen", () => {

@@ -139,6 +139,31 @@ export function transcribeEnabled(): boolean {
   return Boolean(config.TRANSCRIBE_URL);
 }
 
+export type CaptureDecision =
+  | "image"
+  | "image-notice"
+  | "voice"
+  | "voice-notice"
+  | "text";
+
+/** Decide capture vs NL. Capture-off ignores attachments and still treats text as planner input. */
+export function captureDecision(input: {
+  hasImage: boolean;
+  hasVoice: boolean;
+  captureImages: boolean;
+  captureVoice: boolean;
+  visionOn: boolean;
+  transcribeOn: boolean;
+}): CaptureDecision {
+  if (input.hasImage && input.captureImages) {
+    return input.visionOn ? "image" : "image-notice";
+  }
+  if (input.hasVoice && input.captureVoice) {
+    return input.transcribeOn ? "voice" : "voice-notice";
+  }
+  return "text";
+}
+
 export async function transcribeAudio(url: string, filename: string): Promise<string> {
   if (!config.TRANSCRIBE_URL) {
     throw new Error("Voice capture is off.");

@@ -4,14 +4,14 @@ import {
   ButtonStyle,
 } from "discord.js";
 
-export type ButtonOp = "c" | "u" | "z" | "t" | "k" | "r" | "ml" | "ok" | "x";
+export type ButtonOp = "c" | "u" | "z" | "t" | "k" | "r" | "ml";
 
 export interface ParsedCustomId {
   op: ButtonOp;
   id?: string;
 }
 
-const OPS = new Set<string>(["c", "u", "z", "t", "k", "r", "ml", "ok", "x"]);
+const OPS = new Set<string>(["c", "u", "z", "t", "k", "r", "ml"]);
 
 export function parseCustomId(customId: string): ParsedCustomId | null {
   if (!customId.startsWith("s1:")) return null;
@@ -81,19 +81,6 @@ export function briefingRow(): ActionRowBuilder<ButtonBuilder> {
       .setCustomId(customId("ml"))
       .setLabel("Move leftovers to today")
       .setStyle(ButtonStyle.Primary),
-  );
-}
-
-export function draftRow(draftId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(customId("ok", draftId))
-      .setLabel("Confirm")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(customId("x", draftId))
-      .setLabel("Cancel")
-      .setStyle(ButtonStyle.Secondary),
   );
 }
 

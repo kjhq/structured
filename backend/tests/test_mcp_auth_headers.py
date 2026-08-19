@@ -1,5 +1,9 @@
+import json
 from types import SimpleNamespace
 
+import pytest
+
+from structured_backend.errors import AppError
 from structured_backend.mcp_server import server as mcp_server
 
 
@@ -21,3 +25,31 @@ def test_auth_headers_from_mcp_request_missing_context(monkeypatch):
 
     monkeypatch.setattr(mcp_server.mcp, "get_context", boom)
     assert mcp_server._auth_headers_from_mcp_request() == (None, None)
+
+
+def test_tool_result_sets_is_error_when_payload_has_error():
+    err = mcp_server._tool_result({"error": True, "code": "not_found", "message": "missing"})
+    assert err.isError is True
+    payload = json.loads(err.content[0].text)
+    assert payload["error"] is True
+    ok = mcp_server._tool_result({"title": "Gym"})
+    assert ok.isError is False
+
+
+@pytest.mark.asyncio
+async def test_run_sets_is_error_on_app_error(monkeypatch):
+    async def boom():
+        raise AppError("not_found", "missing", status_code=404)
+        if False:  # pragma: no cover
+            yield None, None
+
+    monkeypatch.setattr(mcp_server, "_session_and_user", boom)
+
+    async def dummy(_db, _user):
+        return {"title": "unused"}
+
+    result = await mcp_server._run(dummy)
+    assert result.isError is True
+    payload = json.loads(result.content[0].text)
+    assert payload["error"] is True
+    assert payload["code"] == "not_found"

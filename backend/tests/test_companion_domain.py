@@ -1,13 +1,16 @@
 from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from zoneinfo import ZoneInfo
 
+import asyncio
 import pytest
 
 from structured_backend.errors import AppError
 from structured_backend.mcp_server import tools as planner
 from structured_backend.mcp_server.tools import ResponseFormat
 from structured_backend.models.notification import NotificationDelivery
+from structured_backend.models.series import Series
 from structured_backend.schemas.series import ExceptionCreate, Freq, SeriesCreate
 from structured_backend.schemas.task import AlertCreate, TaskCreate, TaskUpdate
 from structured_backend.services import users as user_service
@@ -682,4 +685,95 @@ async def test_delete_skips_pending_deliveries(db_session, monkeypatch):
     ).scalar_one()
     assert row.status == "skipped"
     assert row.skip_reason == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_create_series_idempotent_client_request_id(db_session):
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="series-idem-user", timezone="UTC"
+    )
+    a = await planner.planner_create_series(
+        db_session,
+        user,
+        title="Gym",
+        freq="weekly",
+        start_day=date(2026, 8, 17),
+        weekdays=[0],
+        start_time=time(7, 0),
+        client_request_id="discord:msg:series-1",
+    )
+    b = await planner.planner_create_series(
+        db_session,
+        user,
+        title="Gym",
+        freq="weekly",
+        start_day=date(2026, 8, 17),
+        weekdays=[0],
+        start_time=time(7, 0),
+        client_request_id="discord:msg:series-1",
+    )
+    assert a["series_id"] == b["series_id"]
+    rows = (
+        await db_session.execute(select(Series).where(Series.user_id == user.id, Series.deleted_at.is_(None)))
+    ).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_inbox_this_idempotent_client_request_id(db_session):
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="inbox-this-user", timezone="UTC"
+    )
+    key = "discord:msg:abc:inbox"
+    a = await planner.planner_create_task(
+        db_session, user, title="Saved message", client_request_id=key
+    )
+    b = await planner.planner_create_task(
+        db_session, user, title="Saved message", client_request_id=key
+    )
+    assert a["task_id"] == b["task_id"]
+
+
+@pytest.mark.asyncio
+async def test_claim_due_concurrent_no_double_claim(db_engine, monkeypatch):
+    now = datetime(2026, 8, 18, 1, 21, tzinfo=timezone.utc)
+    _freeze(monkeypatch, now)
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as setup:
+        user = await user_service.ensure_user_for_discord(
+            setup, discord_id="cas-user", timezone="UTC"
+        )
+        setup.add(
+            NotificationDelivery(
+                user_id=user.id,
+                kind="alert",
+                source_key="alert:task:cas:2026-08-18T01:21",
+                fire_at=now,
+                payload={"embed": {"title": "Gym"}},
+                status="pending",
+            )
+        )
+        await setup.commit()
+        user_id = user.id
+
+    async def claim_one():
+        async with factory() as session:
+            return await NotificationService(session).claim_due(now, limit=50)
+
+    first, second = await asyncio.gather(claim_one(), claim_one(), return_exceptions=True)
+    claimed_ids: list = []
+    for result in (first, second):
+        if isinstance(result, BaseException):
+            continue
+        claimed_ids.extend(row.id for row in result)
+    assert len(claimed_ids) == len(set(claimed_ids))
+    async with factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(NotificationDelivery).where(NotificationDelivery.user_id == user_id)
+                )
+            ).scalars().all()
+        )
+    assert sum(1 for row in rows if row.status == "claimed") == 1
 

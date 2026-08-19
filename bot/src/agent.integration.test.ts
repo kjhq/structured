@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { prompt, setChatImplForTest } from "./agent.js";
+import { prompt, promptFull, setChatImplForTest } from "./agent.js";
 import {
   setMcpClientFactoryForTest,
   resetAllMcpSessionsForTest,
@@ -365,6 +365,41 @@ describe("agent integration", () => {
       });
       assert.equal(out, "created");
       assert.equal(seen[0]?.args.client_request_id, "discord:msg:99");
+    });
+
+    it("omits mutations when last mutation tool result is not JSON", async () => {
+      setFetchUserContextForTest(async () => ({ timezone: "UTC", today: "2026-01-01" }));
+      setMcpClientFactoryForTest(async () => {
+        return {
+          connect: async () => {},
+          close: async () => {},
+          listTools: async () => ({
+            tools: [{ name: "planner_create_task", inputSchema: { type: "object" } }],
+          }),
+          callTool: async () => ({
+            content: [{ type: "text", text: "not-json" }],
+          }),
+        } as unknown as Client;
+      });
+      setChatImplForTest(async (messages) => {
+        if (messages.some((m) => m.role === "tool")) return { content: "created" };
+        return {
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "planner_create_task",
+                arguments: JSON.stringify({ title: "X" }),
+              },
+            },
+          ],
+        };
+      });
+      const out = await promptFull("add X", FIXTURE_CHANNEL, FIXTURE_USERS.alice);
+      assert.equal(out.content, "created");
+      assert.deepEqual(out.mutations, []);
     });
 
   it("clears history when server logical day changes", async () => {

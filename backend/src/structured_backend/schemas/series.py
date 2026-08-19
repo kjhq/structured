@@ -27,6 +27,7 @@ class SeriesCreate(BaseModel):
     is_all_day: bool = False
     color: str | None = None
     symbol: str | None = None
+    client_request_id: str | None = Field(default=None, max_length=128)
     alerts: list[AlertCreate] = Field(default_factory=list)
 
 
