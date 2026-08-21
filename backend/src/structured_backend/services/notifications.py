@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -87,6 +88,81 @@ def _embed(title: str, when: str, color: str | None = None, notes: str | None = 
         "description": "",
         "color": color or "#5E96CB",
         "fields": fields,
+    }
+
+
+BRIEFING_TITLES = {
+    "briefing_morning": "Morning briefing",
+    "briefing_evening": "Evening wrap",
+    "overdue": "Leftovers",
+}
+
+
+def _briefing_line(item: Any) -> str:
+    title = getattr(item, "title", None) or "(untitled)"
+    done = "✓ " if getattr(item, "completed_at", None) else ""
+    start = getattr(item, "start_time", None)
+    day = getattr(item, "day", None)
+    if start and not getattr(item, "is_all_day", False):
+        clock = start.strftime("%H:%M") if hasattr(start, "strftime") else str(start)[:5]
+        return f"{done}`{clock}` **{title}**" + (f" · {day}" if day else "")
+    return f"{done}**{title}**" + (f" · {day}" if day else "")
+
+
+async def render_briefing_embed(db: AsyncSession, user: User, kind: str) -> dict:
+    """Fresh embed for a claimed briefing row so content reflects send-time state."""
+    from structured_backend.api.tasks import merge_day
+    from structured_backend.services.tasks import TaskService
+
+    today = user_today(user)
+    task_svc = TaskService(db)
+    parts: list[str] = []
+
+    if kind == "briefing_morning":
+        items = await merge_day(user, db, today)
+        open_today = [i for i in items if not i.completed_at]
+        inbox = await task_svc.list_inbox(user)
+        backlog = await task_svc.list_open(user)
+        if open_today:
+            parts.extend(_briefing_line(i) for i in open_today[:10])
+            extra = len(open_today) - 10
+            if extra > 0:
+                parts.append(f"and {extra} more")
+        else:
+            parts.append("Nothing scheduled today.")
+        parts.append("")
+        parts.append(
+            f"inbox {len(inbox)} · leftovers {len(backlog)}"
+        )
+    elif kind == "briefing_evening":
+        items = await merge_day(user, db, today)
+        done = [i for i in items if i.completed_at]
+        remaining = [i for i in items if not i.completed_at]
+        parts.append(f"Done today: **{len(done)}**")
+        if remaining:
+            parts.append("Still open:")
+            parts.extend(_briefing_line(i) for i in remaining[:10])
+        else:
+            parts.append("Everything on today is ticked. 🎉")
+        backlog = await task_svc.list_open(user)
+        if backlog:
+            parts.append("")
+            parts.append(f"leftovers from earlier days: {len(backlog)}")
+    else:
+        backlog = await task_svc.list_open(user)
+        if backlog:
+            parts.extend(_briefing_line(i) for i in backlog[:10])
+            extra = len(backlog) - 10
+            if extra > 0:
+                parts.append(f"and {extra} more")
+        else:
+            parts.append("No leftover tasks.")
+
+    return {
+        "title": BRIEFING_TITLES.get(kind, "Briefing"),
+        "description": "\n".join(parts).strip()[:4000],
+        "color": "#5E96CB",
+        "fields": [],
     }
 
 

@@ -13,7 +13,7 @@ from structured_backend.mcp_server import tools as planner
 from structured_backend.mcp_server.tools import ResponseFormat
 from structured_backend.schemas.task import TaskRead
 from structured_backend.services import users as user_service
-from structured_backend.services.notifications import NotificationService
+from structured_backend.services.notifications import NotificationService, render_briefing_embed
 from structured_backend.services.series import SeriesService
 from structured_backend.services.settings import get_settings, update_settings
 from structured_backend.services.snooze import snooze_item
@@ -86,6 +86,11 @@ async def notifications_due(
     items = []
     for row in claimed:
         payload = dict(row.payload or {})
+        if row.kind in ("briefing_morning", "briefing_evening", "overdue") and row.user is not None:
+            try:
+                payload["embed"] = await render_briefing_embed(db, row.user, row.kind)
+            except Exception:
+                pass
         payload["delivery_id"] = str(row.id)
         items.append(payload)
     return {"items": items}

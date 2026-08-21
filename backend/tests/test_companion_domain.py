@@ -20,6 +20,7 @@ from structured_backend.services.notifications import (
     alert_fire_at,
     defer_through_quiet,
     in_quiet_hours,
+    render_briefing_embed,
 )
 from structured_backend.services.schedule import overlaps_on_day, suggest_slots, week_streaks
 from structured_backend.services.series import SeriesService, occurrence_id
@@ -545,6 +546,38 @@ async def test_briefing_catchup_within_two_hours(db_session, monkeypatch):
     due = await nsvc.claim_due(now, limit=50)
     assert len(due) == 1
     assert due[0].kind == "briefing_morning"
+
+
+@pytest.mark.asyncio
+async def test_render_briefing_embeds_reflect_live_data(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 2, 30, tzinfo=timezone.utc)  # 08:00 IST
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="briefing-render", timezone="Asia/Kolkata"
+    )
+    await update_settings(db_session, user, {"briefing_morning_time": time(7, 0)})
+    svc = TaskService(db_session)
+    await svc.create(user, TaskCreate(title="Morning tea", is_all_day=True, day=date(2026, 8, 18)))
+
+    morning = await render_briefing_embed(db_session, user, "briefing_morning")
+    assert morning["title"] == "Morning briefing"
+    assert "Morning tea" in morning["description"]
+    assert "inbox 0" in morning["description"]
+
+    evening = await render_briefing_embed(db_session, user, "briefing_evening")
+    assert evening["title"] == "Evening wrap"
+    assert "Done today: **0**" in evening["description"]
+    assert "Morning tea" in evening["description"]
+
+    overdue = await render_briefing_embed(db_session, user, "overdue")
+    assert overdue["title"] == "Leftovers"
+
+    completed = await svc.list_for_day(user, date(2026, 8, 18))
+    from structured_backend.mcp_server import tools as planner
+
+    await planner.planner_complete_tasks(db_session, user, task_ids=[str(completed[0].id)])
+    evening_done = await render_briefing_embed(db_session, user, "briefing_evening")
+    assert "Done today: **1**" in evening_done["description"]
 
 
 @pytest.mark.asyncio
