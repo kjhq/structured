@@ -58,7 +58,7 @@ async def test_bot_views_and_actions_round_trip(client):
 async def test_bot_settings_patch_timezone(client):
     got = await client.get("/v1/bot/settings", headers=BOT)
     assert got.status_code == 200
-    assert got.json()["guild_mode"] == "all"
+    assert "guild_mode" not in got.json()
 
     patched = await client.patch(
         "/v1/bot/settings",

@@ -687,11 +687,8 @@ async def planner_update_settings(
     quiet_hours_end: str | None = None,
     reminders_enabled: bool | None = None,
     overdue_enabled: bool | None = None,
-    guild_mode: str | None = None,
-    planner_channel_id: str | None = None,
     capture_images: bool | None = None,
     capture_voice: bool | None = None,
-    presence_enabled: bool | None = None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {}
     if timezone is not None:
@@ -710,16 +707,10 @@ async def planner_update_settings(
         data["reminders_enabled"] = reminders_enabled
     if overdue_enabled is not None:
         data["overdue_enabled"] = overdue_enabled
-    if guild_mode is not None:
-        data["guild_mode"] = guild_mode
-    if planner_channel_id is not None:
-        data["planner_channel_id"] = planner_channel_id or None
     if capture_images is not None:
         data["capture_images"] = capture_images
     if capture_voice is not None:
         data["capture_voice"] = capture_voice
-    if presence_enabled is not None:
-        data["presence_enabled"] = presence_enabled
     return await update_settings(db, user, data)
 
 

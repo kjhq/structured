@@ -188,22 +188,22 @@ async def test_find_range_includes_occurrences(db_session):
 
 
 @pytest.mark.asyncio
-async def test_settings_timezone_and_channel_mode(db_session):
+async def test_settings_timezone_and_quiet_validation(db_session):
     user = await user_service.ensure_user_for_discord(
         db_session, discord_id="settings-user", timezone="UTC"
     )
     out = await update_settings(db_session, user, {"timezone": "Asia/Kolkata"})
     assert out["timezone"] == "Asia/Kolkata"
     with pytest.raises(AppError) as exc:
-        await update_settings(db_session, user, {"guild_mode": "channel"})
+        await update_settings(db_session, user, {"quiet_hours_start": "23:00"})
     assert exc.value.code == "validation_error"
     out = await update_settings(
         db_session,
         user,
-        {"guild_mode": "channel", "planner_channel_id": "123"},
+        {"quiet_hours_start": "23:00", "quiet_hours_end": "07:00"},
     )
-    assert out["guild_mode"] == "channel"
-    assert get_settings(user)["planner_channel_id"] == "123"
+    assert out["quiet_hours_start"] == "23:00:00"
+    assert get_settings(user)["quiet_hours_end"] == "07:00:00"
 
 
 @pytest.mark.asyncio

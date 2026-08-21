@@ -33,11 +33,8 @@ class User(Base):
     quiet_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     overdue_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    guild_mode: Mapped[str] = mapped_column(String(16), default="all", nullable=False)
-    planner_channel_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     capture_images: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     capture_voice: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    presence_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

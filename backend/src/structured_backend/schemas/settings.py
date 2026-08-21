@@ -12,11 +12,8 @@ class SettingsRead(BaseModel):
     quiet_hours_end: time | None = None
     reminders_enabled: bool
     overdue_enabled: bool
-    guild_mode: str
-    planner_channel_id: str | None = None
     capture_images: bool
     capture_voice: bool
-    presence_enabled: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -28,8 +25,5 @@ class SettingsUpdate(BaseModel):
     quiet_hours_end: time | None = None
     reminders_enabled: bool | None = None
     overdue_enabled: bool | None = None
-    guild_mode: str | None = None
-    planner_channel_id: str | None = None
     capture_images: bool | None = None
     capture_voice: bool | None = None
-    presence_enabled: bool | None = None

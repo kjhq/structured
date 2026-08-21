@@ -463,11 +463,8 @@ async def planner_update_settings(
     quiet_hours_end: str | None = None,
     reminders_enabled: bool | None = None,
     overdue_enabled: bool | None = None,
-    guild_mode: str | None = None,
-    planner_channel_id: str | None = None,
     capture_images: bool | None = None,
     capture_voice: bool | None = None,
-    presence_enabled: bool | None = None,
 ) -> dict[str, Any]:
     """Patch user settings. Time fields are HH:MM or 'off' to clear. Empty call is a no-op."""
     return await _run(
@@ -480,11 +477,8 @@ async def planner_update_settings(
         quiet_hours_end=quiet_hours_end,
         reminders_enabled=reminders_enabled,
         overdue_enabled=overdue_enabled,
-        guild_mode=guild_mode,
-        planner_channel_id=planner_channel_id,
         capture_images=capture_images,
         capture_voice=capture_voice,
-        presence_enabled=presence_enabled,
     )
 
 
