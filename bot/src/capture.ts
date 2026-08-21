@@ -200,7 +200,7 @@ export function jumpNotes(
   const rest = content.replace(/\s+/g, " ").trim().slice(80);
   const link = loc.guildId
     ? `https://discord.com/channels/${loc.guildId}/${loc.channelId}/${loc.messageId}`
-    : `channel ${loc.channelId} message ${loc.messageId}`;
+    : `https://discord.com/channels/@me/${loc.channelId}/${loc.messageId}`;
   return [rest, link].filter(Boolean).join("\n");
 }
 

@@ -102,12 +102,12 @@ describe("bot integration", () => {
     setPromptForTest(async () => "ok");
   });
 
-  it("createBot registers MessageContent and guild message handler", () => {
+  it("createBot registers MessageContent and DM message handler", () => {
     const client = createBot();
     const options = (client as unknown as { options: { intents: { bitfield: number } } }).options;
     const bitfield = options.intents.bitfield;
     assert.ok(bitfield & GatewayIntentBits.MessageContent);
-    assert.ok(bitfield & GatewayIntentBits.GuildMessages);
+    assert.ok(bitfield & GatewayIntentBits.DirectMessages);
 
     const listeners = client.listeners(Events.MessageCreate);
     assert.ok(listeners.length >= 1);
@@ -119,12 +119,27 @@ describe("bot integration", () => {
     assert.ok(events.has(Events.InteractionCreate));
   });
 
-  it("guild unauthorized messages stay silent", async () => {
+  it("guild messages are ignored entirely (DM-only)", async () => {
     const replies: unknown[] = [];
+    const prompted: string[] = [];
+    setPromptForTest(async (text) => {
+      prompted.push(text);
+      return "done";
+    });
+    await handleMessageForTest({
+      author: { bot: false, id: FIXTURE_USERS.alice },
+      content: "<@bot-user> hello",
+      guildId: "guild-1",
+      channel: { isTextBased: () => true },
+      channelId: "channel-1",
+      reply: async (payload: unknown) => {
+        replies.push(payload);
+      },
+    } as never);
     await handleMessageForTest({
       author: { bot: false, id: FIXTURE_USERS.stranger },
       content: "hello",
-      guild: { id: "guild-1" },
+      guildId: "guild-1",
       channel: { isTextBased: () => true },
       channelId: "channel-1",
       reply: async (payload: unknown) => {
@@ -132,6 +147,7 @@ describe("bot integration", () => {
       },
     } as never);
     assert.equal(replies.length, 0);
+    assert.deepEqual(prompted, []);
   });
 
   it("DM unauthorized messages reply without mentioning the author", async () => {
@@ -139,7 +155,7 @@ describe("bot integration", () => {
     await handleMessageForTest({
       author: { bot: false, id: FIXTURE_USERS.stranger },
       content: "hello",
-      guild: null,
+      guildId: null,
       channel: { isTextBased: () => true },
       channelId: "dm-1",
       reply: async (payload: unknown) => {
@@ -156,110 +172,6 @@ describe("bot integration", () => {
     assert.equal(payload.allowedMentions.repliedUser, false);
   });
 
-  it("allowlisted guild messages still run the planner prompt", async () => {
-    const prompted: string[] = [];
-    setPromptForTest(async (text, channelId, userId) => {
-      prompted.push(`${userId}:${channelId}:${text}`);
-      return "done";
-    });
-    await handleMessageForTest({
-      author: { bot: false, id: FIXTURE_USERS.alice },
-      content: `<@bot-user> what is today?`,
-      guild: { id: "guild-1" },
-      mentions: {
-        users: { has: (id: string) => id === "bot-user" },
-        repliedUser: null,
-      },
-      client: { user: { id: "bot-user" } },
-      channel: {
-        isTextBased: () => true,
-        sendTyping: async () => {},
-        send: async () => {},
-      },
-      channelId: "channel-1",
-    } as never);
-    assert.deepEqual(prompted, [
-      `${FIXTURE_USERS.alice}:channel-1:what is today?`,
-    ]);
-  });
-
-  it("ignores guild messages that do not mention or reply to the bot", async () => {
-    const prompted: string[] = [];
-    setPromptForTest(async (text) => {
-      prompted.push(text);
-      return "done";
-    });
-    await handleMessageForTest({
-      author: { bot: false, id: FIXTURE_USERS.alice },
-      content: "done",
-      guild: { id: "guild-1" },
-      mentions: {
-        users: { has: () => false },
-        repliedUser: null,
-      },
-      client: { user: { id: "bot-user" } },
-      channel: {
-        isTextBased: () => true,
-        sendTyping: async () => {},
-        send: async () => {},
-      },
-      channelId: "channel-1",
-    } as never);
-    assert.deepEqual(prompted, []);
-  });
-
-  it("runs the planner on a guild reply to the bot", async () => {
-    const prompted: string[] = [];
-    setPromptForTest(async (text) => {
-      prompted.push(text);
-      return "done";
-    });
-    await handleMessageForTest({
-      author: { bot: false, id: FIXTURE_USERS.alice },
-      content: "also add milk",
-      guild: { id: "guild-1" },
-      mentions: {
-        users: { has: () => false },
-        repliedUser: { id: "bot-user" },
-      },
-      client: { user: { id: "bot-user" } },
-      channel: {
-        isTextBased: () => true,
-        sendTyping: async () => {},
-        send: async () => {},
-      },
-      channelId: "channel-1",
-    } as never);
-    assert.deepEqual(prompted, ["also add milk"]);
-  });
-
-  it("fetches the referenced message when repliedUser is missing", async () => {
-    const prompted: string[] = [];
-    setPromptForTest(async (text) => {
-      prompted.push(text);
-      return "done";
-    });
-    await handleMessageForTest({
-      author: { bot: false, id: FIXTURE_USERS.alice },
-      content: "also add milk",
-      guild: { id: "guild-1" },
-      mentions: {
-        users: { has: () => false },
-        repliedUser: null,
-      },
-      reference: { messageId: "prior-bot-msg" },
-      fetchReference: async () => ({ author: { id: "bot-user" } }),
-      client: { user: { id: "bot-user" } },
-      channel: {
-        isTextBased: () => true,
-        sendTyping: async () => {},
-        send: async () => {},
-      },
-      channelId: "channel-1",
-    } as never);
-    assert.deepEqual(prompted, ["also add milk"]);
-  });
-
   it("DMs from allowlisted users run without a mention", async () => {
     const prompted: string[] = [];
     setPromptForTest(async (text) => {
@@ -269,7 +181,7 @@ describe("bot integration", () => {
     await handleMessageForTest({
       author: { bot: false, id: FIXTURE_USERS.alice },
       content: "inbox",
-      guild: null,
+      guildId: null,
       mentions: {
         users: { has: () => false },
         repliedUser: null,
@@ -312,7 +224,7 @@ describe("bot integration", () => {
     await handler(interaction);
     assert.equal(interaction.replies.length, 1);
     const payload = interaction.replies[0] as { content: string; flags: number };
-    assert.match(payload.content, /Planner Task Bot/);
+    assert.match(payload.content, /Structured/);
     assert.equal(payload.flags, MessageFlags.Ephemeral);
   });
 
@@ -356,10 +268,10 @@ describe("bot integration", () => {
 
     const promptDone = handleMessageForTest({
       author: { bot: false, id: FIXTURE_USERS.alice },
-      content: "<@bot-user> keep going",
-      guild: { id: "guild-1" },
+      content: "keep going",
+      guildId: null,
       mentions: {
-        users: { has: (id: string) => id === "bot-user" },
+        users: { has: () => false },
         repliedUser: null,
       },
       client: { user: { id: "bot-user" } },

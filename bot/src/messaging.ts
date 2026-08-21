@@ -70,18 +70,22 @@ export function labelOf(interaction: RepliableInteraction): string {
 
 /**
  * Guarantees the interaction is acknowledged within ~1s even if the handler
- * stalls, and always answers with an ephemeral error on failure.
+ * stalls, and always answers with an ephemeral error on failure. Pass a
+ * custom ack (e.g. deferUpdate for buttons) when the handler edits the
+ * origin message instead of replying.
  */
 export async function withAck(
   interaction: RepliableInteraction,
   fn: () => Promise<void>,
+  ack?: () => Promise<void>,
 ): Promise<void> {
+  const doAck =
+    ack ??
+    (() => interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {}));
   let settled = false;
   const timer = setTimeout(() => {
     if (!settled && !interaction.deferred && !interaction.replied) {
-      void interaction
-        .deferReply({ flags: MessageFlags.Ephemeral })
-        .catch(() => {});
+      void doAck();
     }
   }, 1000);
   try {
@@ -106,7 +110,7 @@ export async function withAck(
 
 /** Personal data must not broadcast in servers: ephemeral there, normal in DMs. */
 export function dmFlags(interaction: { guildId?: string | null }): {
-  flags?: MessageFlags;
+  flags?: typeof MessageFlags.Ephemeral;
 } {
   return interaction.guildId ? { flags: MessageFlags.Ephemeral } : {};
 }

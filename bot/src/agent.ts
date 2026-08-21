@@ -45,7 +45,7 @@ function buildSystemPrompt(ctx: UserContext): string {
     "- planner_update_task / planner_complete_tasks / planner_uncomplete_tasks / planner_reschedule / planner_delete_tasks / planner_restore_tasks",
     "- planner_list_series / planner_create_series / planner_update_series / planner_delete_series: recurring rules",
     "- planner_skip_occurrence: hide one day. planner_override_occurrence: change just that day (this Thursday)",
-    "- planner_update_settings: timezone, briefings (HH:MM or off), quiet hours, guild_mode, reminders",
+    "- planner_update_settings: timezone, briefings (HH:MM or off), quiet hours, reminders",
     "- planner_suggest_slots: free times 07:00–21:00. Propose, wait for confirmation before scheduling",
     "- planner_toggle_note_item: check/uncheck a '- [ ]' line in one-off task notes (does not complete the parent)",
     "- Recurring: use planner_create_series (freq=daily|weekly|monthly|yearly). weekdays 0=Mon..6=Sun for weekly.",

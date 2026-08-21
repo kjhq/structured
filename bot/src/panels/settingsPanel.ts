@@ -97,10 +97,15 @@ export async function handlePanelSet(
   const current = await getSettings(interaction.user.id);
   const body = applyPanelSet(field, value, current);
   const s = await patchSettings(interaction.user.id, body);
-  await interaction.update({
+  const payload = {
     embeds: [panelEmbed(s, { timezone: s.timezone, today: "" })],
     components: settingsRows(s),
-  });
+  };
+  try {
+    await interaction.update(payload);
+  } catch {
+    await interaction.editReply(payload).catch(() => {});
+  }
 }
 
 export async function openPanelModal(
