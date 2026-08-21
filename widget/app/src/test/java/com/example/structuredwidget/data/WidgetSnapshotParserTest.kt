@@ -57,6 +57,32 @@ class WidgetSnapshotParserTest {
         val tasks = WidgetSnapshotParser.parseTimeline(arr)
         assertEquals(9.5, tasks[0].startTime!!, 0.01)
     }
+
+    @Test
+    fun `parse occurrence keeps alerts`() {
+        val json = JSONObject(
+            """
+            {
+              "logical_date": "2026-07-30",
+              "timezone": "Asia/Kolkata",
+              "day_starts_at": "00:00:00",
+              "generated_at": "2026-07-30T04:30:00Z",
+              "version": "occ1",
+              "today": [{"id":"occ_1","title":"Gym","day":"2026-07-30","start_time":"07:00:00","duration_minutes":30,"is_all_day":false,"is_occurrence":true,"alerts":[{"kind":"start","offset_minutes":-10}]}],
+              "inbox": [],
+              "due": [],
+              "tomorrow": [],
+              "week": []
+            }
+            """.trimIndent(),
+        )
+        val snap = WidgetSnapshotParser.parse(json)
+        assertEquals(1, snap.today.size)
+        assertEquals("Gym", snap.today[0].title)
+        assertEquals(1, snap.today[0].alerts.size)
+        assertEquals("start", snap.today[0].alerts[0].type)
+        assertEquals(-10, snap.today[0].alerts[0].offset)
+    }
 }
 
 class CombinedDataCacheTest {

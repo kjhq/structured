@@ -58,3 +58,4 @@ cd ios && swift test
 - [x] Bot migrated off Structured OAuth
 - [x] Widget migrated to REST
 - [x] iOS WidgetKit companion
+- [x] Discord companion: slash views, buttons, alerts, capture

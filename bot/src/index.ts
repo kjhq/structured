@@ -1,3 +1,4 @@
+import { startCompanionLoops, stopCompanionLoops } from "./notifyWorker.js";
 import { unlinkSync, writeFileSync } from "fs";
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
@@ -27,11 +28,13 @@ process.on("uncaughtException", (err) => {
 });
 process.once("SIGINT", () => {
   clearReady();
+  stopCompanionLoops();
   bot.destroy();
   process.exit(0);
 });
 process.once("SIGTERM", () => {
   clearReady();
+  stopCompanionLoops();
   bot.destroy();
   process.exit(0);
 });
@@ -53,6 +56,7 @@ async function main(): Promise<void> {
 
   console.log("Starting Discord bot…");
   await bot.login(config.DISCORD_BOT_TOKEN);
+  startCompanionLoops(bot);
 }
 
 main().catch((err) => {

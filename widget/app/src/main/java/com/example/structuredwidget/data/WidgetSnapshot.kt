@@ -104,17 +104,17 @@ object WidgetSnapshotParser {
                 val o = json.getJSONObject(i)
                 Alert(
                     type = o.optString("kind", o.optString("type", "start")),
-                    offset = if (o.isNull("offset_minutes")) {
-                        if (o.isNull("offset")) null else o.getInt("offset")
-                    } else {
-                        o.getInt("offset_minutes")
-                    },
+                    offset = intOrNull(o, "offset_minutes")
+                        ?: intOrNull(o, "offset"),
                 )
             } catch (_: Exception) {
                 null
             }
         }
     }
+
+    private fun intOrNull(o: JSONObject, key: String): Int? =
+        if (!o.has(key) || o.isNull(key)) null else o.getInt(key)
 
     private fun parseLocalTime(raw: String): LocalTime =
         try {

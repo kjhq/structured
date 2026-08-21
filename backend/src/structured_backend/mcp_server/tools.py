@@ -12,9 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structured_backend.errors import AppError
 from structured_backend.models.user import User
 from structured_backend.schemas.series import ExceptionCreate, Freq, SeriesCreate, SeriesUpdate
-from structured_backend.schemas.task import TaskCreate, TaskUpdate
+from structured_backend.schemas.task import AlertCreate, TaskCreate, TaskUpdate
+from structured_backend.services.checklists import toggle_note_item
+from structured_backend.services.schedule import (
+    overlap_warnings_for_item,
+    overlaps_on_day,
+    suggest_slots,
+    week_streaks,
+)
 from structured_backend.services.search import search_tasks
-from structured_backend.services.series import SeriesService, series_to_read
+from structured_backend.services.series import SeriesService, parse_occurrence_id, series_to_read
+from structured_backend.services.settings import get_settings, update_settings
+from structured_backend.services.snooze import snooze_item
 from structured_backend.services.tasks import TaskService
 from structured_backend.timeutil import user_today
 
@@ -24,21 +33,14 @@ class ResponseFormat(str, Enum):
     detailed = "detailed"
 
 
-def parse_occurrence_id(oid: str) -> tuple[UUID, date]:
-    """Parse `occ_<uuid>_<YYYY-MM-DD>` into series id + day."""
-    if not oid.startswith("occ_"):
-        raise AppError(
-            "validation_error",
-            f"Not an occurrence id: {oid}",
-            hint="Occurrence ids look like occ_<series-uuid>_<YYYY-MM-DD>",
-        )
-    rest = oid[4:]
-    if len(rest) < 12 or rest[-11] != "_":
-        raise AppError("validation_error", f"Malformed occurrence id: {oid}")
-    try:
-        return UUID(rest[:-11]), date.fromisoformat(rest[-10:])
-    except ValueError as err:
-        raise AppError("validation_error", f"Malformed occurrence id: {oid}") from err
+def _alert_dicts(obj) -> list[dict[str, Any]]:
+    raw = getattr(obj, "alerts", None) or []
+    out: list[dict[str, Any]] = []
+    for a in raw:
+        kind = a.kind if hasattr(a, "kind") else a.get("kind")
+        offset = a.offset_minutes if hasattr(a, "offset_minutes") else a.get("offset_minutes")
+        out.append({"kind": kind, "offset_minutes": offset})
+    return out
 
 
 def format_task(task, fmt: ResponseFormat) -> dict[str, Any]:
@@ -52,6 +54,7 @@ def format_task(task, fmt: ResponseFormat) -> dict[str, Any]:
         "is_all_day": task.is_all_day,
         "completed": task.completed_at is not None,
         "is_occurrence": False,
+        "alerts": _alert_dicts(task),
     }
 
 
@@ -65,6 +68,7 @@ def format_occurrence(occ, fmt: ResponseFormat) -> dict[str, Any]:
         "is_all_day": occ.is_all_day,
         "completed": occ.completed_at is not None,
         "is_occurrence": True,
+        "alerts": _alert_dicts(occ),
     }
     if fmt == ResponseFormat.detailed:
         base["notes"] = occ.notes
@@ -87,6 +91,7 @@ def format_series(series, fmt: ResponseFormat) -> dict[str, Any]:
         "end_day": read.end_day.isoformat() if read.end_day else None,
         "start_time": read.start_time.isoformat() if read.start_time else None,
         "is_all_day": read.is_all_day,
+        "alerts": [a.model_dump() for a in read.alerts],
     }
     if fmt == ResponseFormat.detailed:
         out["notes"] = read.notes
@@ -110,6 +115,7 @@ def _task_detailed(task) -> dict[str, Any]:
         "color": task.color,
         "symbol": task.symbol,
         "is_occurrence": False,
+        "alerts": _alert_dicts(task),
     }
 
 
@@ -143,6 +149,17 @@ async def planner_get_overview(
         "series_count": len(await series_svc.list(user)),
         "next_timed": next_timed,
         "open_preview": [format_task(t, response_format) for t in open_tasks[:5]],
+        "overlaps_today": [
+            {
+                "a_title": h["a_title"],
+                "b_title": h["b_title"],
+                "from": h["from"],
+                "to": h["to"],
+            }
+            for h in (await overlaps_on_day(db, user, today))[:5]
+        ],
+        "streaks": (await week_streaks(db, user))[:10],
+        "settings": get_settings(user),
     }
 
 
@@ -152,11 +169,32 @@ async def planner_find_tasks(
     *,
     q: str | None = None,
     day: date | None = None,
+    day_from: date | None = None,
+    day_to: date | None = None,
     open_backlog: bool = False,
     inbox: bool = False,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     svc = TaskService(db)
+    exclusive = sum(
+        [
+            bool(inbox),
+            bool(open_backlog),
+            day is not None,
+            day_from is not None or day_to is not None,
+        ]
+    )
+    if exclusive > 1:
+        raise AppError(
+            "validation_error",
+            "inbox, open_backlog, day, and day_from/day_to are mutually exclusive",
+            hint="Use one of inbox, open_backlog, a single day, or a day_from+day_to range",
+        )
+    if (day_from is None) != (day_to is None):
+        raise AppError(
+            "validation_error",
+            "day_from and day_to must be provided together",
+        )
     if inbox:
         tasks = await svc.list_inbox(user)
         return {"tasks": [format_task(t, response_format) for t in tasks]}
@@ -170,6 +208,16 @@ async def planner_find_tasks(
             "tasks": [format_task(t, response_format) for t in tasks]
             + [format_occurrence(o, response_format) for o in occs]
         }
+    if day_from is not None and day_to is not None:
+        tasks = await svc.list_range(user, day_from, day_to)
+        occs = await SeriesService(db).materialize_range(user, day_from, day_to)
+        items = [format_task(t, response_format) for t in tasks] + [
+            format_occurrence(o, response_format) for o in occs
+        ]
+        if q:
+            ql = q.lower()
+            items = [t for t in items if ql in t["title"].lower()]
+        return {"tasks": items}
     if q:
         tasks = await search_tasks(db, user, q)
         series_hits = [
@@ -183,7 +231,7 @@ async def planner_find_tasks(
         }
     raise AppError(
         "validation_error",
-        "Provide q, day, open_backlog=true, or inbox=true",
+        "Provide q, day, day_from+day_to, open_backlog=true, or inbox=true",
         hint="Use open_backlog for previously unticked dated tasks",
     )
 
@@ -198,6 +246,10 @@ async def planner_create_task(
     is_all_day: bool = False,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+    client_request_id: str | None = None,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     data = TaskCreate(
@@ -207,9 +259,25 @@ async def planner_create_task(
         is_all_day=is_all_day,
         notes=notes,
         duration_minutes=duration_minutes,
+        color=color,
+        symbol=symbol,
+        client_request_id=client_request_id,
+        alerts=[AlertCreate.model_validate(a) for a in (alerts or [])],
     )
     task = await TaskService(db).create(user, data)
-    return format_task(task, response_format)
+    out = format_task(task, response_format)
+    warnings = await overlap_warnings_for_item(
+        db,
+        user,
+        day=task.day,
+        start_time=task.start_time,
+        duration_minutes=task.duration_minutes,
+        is_all_day=task.is_all_day,
+        ignore_id=str(task.id),
+    )
+    if warnings:
+        out["warnings"] = {"overlaps": warnings}
+    return out
 
 
 async def planner_update_task(
@@ -222,17 +290,39 @@ async def planner_update_task(
     start_time: time | None = None,
     is_all_day: bool | None = None,
     notes: str | None = None,
+    duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
-    data = TaskUpdate(
-        title=title,
-        day=day,
-        start_time=start_time,
-        is_all_day=is_all_day,
-        notes=notes,
-    )
+    payload: dict[str, Any] = {
+        "title": title,
+        "day": day,
+        "start_time": start_time,
+        "is_all_day": is_all_day,
+        "notes": notes,
+        "duration_minutes": duration_minutes,
+        "color": color,
+        "symbol": symbol,
+    }
+    data = TaskUpdate.model_validate({k: v for k, v in payload.items() if v is not None})
+    if alerts is not None:
+        data.alerts = [AlertCreate.model_validate(a) for a in alerts]
     task = await TaskService(db).update(user, UUID(task_id), data)
-    return format_task(task, response_format)
+    out = format_task(task, response_format)
+    warnings = await overlap_warnings_for_item(
+        db,
+        user,
+        day=task.day,
+        start_time=task.start_time,
+        duration_minutes=task.duration_minutes,
+        is_all_day=task.is_all_day,
+        ignore_id=str(task.id),
+    )
+    if warnings:
+        out["warnings"] = {"overlaps": warnings}
+    return out
 
 
 async def planner_complete_tasks(
@@ -295,9 +385,15 @@ async def planner_reschedule(
     day: date | None = None,
     start_time: time | None = None,
     move_open_before_to_today: bool = False,
+    snooze_minutes: int | None = None,
+    tomorrow: bool = False,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     """Reschedule one task, or explicitly move open backlog onto today."""
+    if (snooze_minutes or tomorrow) and task_id:
+        return await snooze_item(
+            db, user, task_id, minutes=snooze_minutes, tomorrow=tomorrow
+        )
     svc = TaskService(db)
     if move_open_before_to_today:
         today = user_today(user)
@@ -328,7 +424,19 @@ async def planner_reschedule(
         update.start_time = start_time
         update.is_all_day = False
     task = await svc.update(user, UUID(task_id), update)
-    return format_task(task, response_format)
+    out = format_task(task, response_format)
+    warnings = await overlap_warnings_for_item(
+        db,
+        user,
+        day=task.day,
+        start_time=task.start_time,
+        duration_minutes=task.duration_minutes,
+        is_all_day=task.is_all_day,
+        ignore_id=str(task.id),
+    )
+    if warnings:
+        out["warnings"] = {"overlaps": warnings}
+    return out
 
 
 async def planner_list_series(
@@ -355,6 +463,10 @@ async def planner_create_series(
     is_all_day: bool = False,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+    client_request_id: str | None = None,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     """Create a recurring rule. weekdays: 0=Mon .. 6=Sun (weekly)."""
@@ -377,6 +489,10 @@ async def planner_create_series(
         start_time=start_time,
         duration_minutes=duration_minutes,
         is_all_day=is_all_day,
+        color=color,
+        symbol=symbol,
+        client_request_id=client_request_id,
+        alerts=[AlertCreate.model_validate(a) for a in (alerts or [])],
     )
     series = await SeriesService(db).create(user, data)
     return format_series(series, response_format)
@@ -396,6 +512,9 @@ async def planner_update_series(
     is_all_day: bool | None = None,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
     response_format: ResponseFormat = ResponseFormat.concise,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {}
@@ -424,6 +543,12 @@ async def planner_update_series(
         payload["notes"] = notes
     if duration_minutes is not None:
         payload["duration_minutes"] = duration_minutes
+    if color is not None:
+        payload["color"] = color
+    if symbol is not None:
+        payload["symbol"] = symbol
+    if alerts is not None:
+        payload["alerts"] = [AlertCreate.model_validate(a) for a in alerts]
     series = await SeriesService(db).update(user, UUID(series_id), SeriesUpdate(**payload))
     return format_series(series, response_format)
 
@@ -462,3 +587,180 @@ async def planner_skip_occurrence(
         ExceptionCreate(occurrence_day=occ_day, kind="skip"),
     )
     return {"skipped": True, "series_id": str(sid), "day": occ_day.isoformat()}
+
+
+async def planner_uncomplete_tasks(
+    db: AsyncSession,
+    user: User,
+    *,
+    task_ids: list[str],
+    response_format: ResponseFormat = ResponseFormat.concise,
+) -> dict[str, Any]:
+    task_svc = TaskService(db)
+    series_svc = SeriesService(db)
+    out: list[dict[str, Any]] = []
+    for tid in task_ids:
+        if tid.startswith("occ_"):
+            series_id, day = parse_occurrence_id(tid)
+            await series_svc.uncomplete_occurrence(user, series_id, day)
+            out.append(
+                {
+                    "task_id": tid,
+                    "series_id": str(series_id),
+                    "day": day.isoformat(),
+                    "completed": False,
+                    "is_occurrence": True,
+                }
+            )
+        else:
+            task = await task_svc.uncomplete(user, UUID(tid))
+            out.append(format_task(task, response_format))
+    return {"uncompleted": out}
+
+
+async def planner_restore_tasks(
+    db: AsyncSession,
+    user: User,
+    *,
+    task_ids: list[str] | None = None,
+    series_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    restored: list[str] = []
+    for tid in task_ids or []:
+        await TaskService(db).restore(user, UUID(tid))
+        restored.append(tid)
+    for sid in series_ids or []:
+        await SeriesService(db).restore(user, UUID(sid))
+        restored.append(sid)
+    return {"restored": restored}
+
+
+async def planner_override_occurrence(
+    db: AsyncSession,
+    user: User,
+    *,
+    occurrence_id: str | None = None,
+    series_id: str | None = None,
+    day: date | None = None,
+    title: str | None = None,
+    start_time: time | None = None,
+    duration_minutes: int | None = None,
+    is_all_day: bool | None = None,
+) -> dict[str, Any]:
+    if occurrence_id:
+        sid, occ_day = parse_occurrence_id(occurrence_id)
+    elif series_id and day:
+        sid, occ_day = UUID(series_id), day
+    else:
+        raise AppError("validation_error", "Provide occurrence_id or series_id+day")
+    await SeriesService(db).add_exception(
+        user,
+        sid,
+        ExceptionCreate(
+            occurrence_day=occ_day,
+            kind="override",
+            title=title,
+            start_time=start_time,
+            duration_minutes=duration_minutes,
+            is_all_day=is_all_day,
+        ),
+    )
+    return {"overridden": True, "series_id": str(sid), "day": occ_day.isoformat()}
+
+
+def _opt_time_field(value: str) -> time | None:
+    lowered = value.strip().lower()
+    if lowered in {"off", "null", "none", ""}:
+        return None
+    return time.fromisoformat(value)
+
+
+async def planner_update_settings(
+    db: AsyncSession,
+    user: User,
+    *,
+    timezone: str | None = None,
+    day_starts_at: str | None = None,
+    briefing_morning_time: str | None = None,
+    briefing_evening_time: str | None = None,
+    quiet_hours_start: str | None = None,
+    quiet_hours_end: str | None = None,
+    reminders_enabled: bool | None = None,
+    overdue_enabled: bool | None = None,
+    guild_mode: str | None = None,
+    planner_channel_id: str | None = None,
+    capture_images: bool | None = None,
+    capture_voice: bool | None = None,
+    presence_enabled: bool | None = None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    if timezone is not None:
+        data["timezone"] = timezone
+    if day_starts_at is not None:
+        data["day_starts_at"] = _opt_time_field(day_starts_at)
+    if briefing_morning_time is not None:
+        data["briefing_morning_time"] = _opt_time_field(briefing_morning_time)
+    if briefing_evening_time is not None:
+        data["briefing_evening_time"] = _opt_time_field(briefing_evening_time)
+    if quiet_hours_start is not None:
+        data["quiet_hours_start"] = _opt_time_field(quiet_hours_start)
+    if quiet_hours_end is not None:
+        data["quiet_hours_end"] = _opt_time_field(quiet_hours_end)
+    if reminders_enabled is not None:
+        data["reminders_enabled"] = reminders_enabled
+    if overdue_enabled is not None:
+        data["overdue_enabled"] = overdue_enabled
+    if guild_mode is not None:
+        data["guild_mode"] = guild_mode
+    if planner_channel_id is not None:
+        data["planner_channel_id"] = planner_channel_id or None
+    if capture_images is not None:
+        data["capture_images"] = capture_images
+    if capture_voice is not None:
+        data["capture_voice"] = capture_voice
+    if presence_enabled is not None:
+        data["presence_enabled"] = presence_enabled
+    return await update_settings(db, user, data)
+
+
+async def planner_suggest_slots(
+    db: AsyncSession,
+    user: User,
+    *,
+    duration_minutes: int = 30,
+    day: date | None = None,
+    after_time: time | None = None,
+    count: int = 5,
+) -> dict[str, Any]:
+    slots = await suggest_slots(
+        db,
+        user,
+        duration_minutes=duration_minutes,
+        day=day,
+        after_time=after_time,
+        count=count,
+    )
+    return {"slots": slots}
+
+
+async def planner_toggle_note_item(
+    db: AsyncSession,
+    user: User,
+    *,
+    task_id: str,
+    item_text: str,
+    checked: bool,
+) -> dict[str, Any]:
+    if task_id.startswith("occ_"):
+        raise AppError(
+            "validation_error",
+            "Cannot toggle notes on an occurrence id",
+            hint="Update the series notes or a one-off task",
+        )
+    svc = TaskService(db)
+    task = await svc.get(user, UUID(task_id))
+    if task is None:
+        raise AppError("not_found", "Task not found", status_code=404)
+    notes = toggle_note_item(task.notes, item_text, checked)
+    task = await svc.update(user, UUID(task_id), TaskUpdate(notes=notes))
+    return {"task_id": str(task.id), "notes": task.notes}

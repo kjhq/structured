@@ -38,6 +38,7 @@ class TaskUpdate(BaseModel):
     is_all_day: bool | None = None
     color: str | None = None
     symbol: str | None = None
+    alerts: list[AlertCreate] | None = None
 
 
 class TaskRead(BaseModel):

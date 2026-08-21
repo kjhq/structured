@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import contextvars
+import json
+from collections.abc import Awaitable, Callable
 from datetime import date, time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from structured_backend.config import settings
@@ -46,12 +49,24 @@ mcp = FastMCP(
         "Task planner for the authenticated user. Timezone comes from the user profile — "
         "do not ask for timezone. Incomplete tasks never auto-complete overnight; use "
         "open_backlog to find previously unticked dated tasks. Recurring work uses series "
-        "tools (planner_create_series / list / update / delete / skip_occurrence). "
-        "Day views and complete support occurrence ids occ_<series>_<YYYY-MM-DD>. "
-        "Prefer concise responses."
+        "tools (planner_create_series / list / update / delete / skip_occurrence / "
+        "override_occurrence). Day views and complete support occurrence ids "
+        "occ_<series>_<YYYY-MM-DD>. Prefer concise responses. Prefer day_from/day_to spans "
+        "of at most 7 days."
     ),
     transport_security=_mcp_transport_security,
 )
+
+# Error payloads ({error: true}) must not be validated against success output schemas.
+_orig_tool = mcp.tool
+
+
+def _tool(*args: Any, **kwargs: Any):
+    kwargs.setdefault("structured_output", False)
+    return _orig_tool(*args, **kwargs)
+
+
+mcp.tool = _tool  # type: ignore[method-assign]
 
 _bot_secret: contextvars.ContextVar[str | None] = contextvars.ContextVar("bot_secret", default=None)
 _discord_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("discord_id", default=None)
@@ -136,42 +151,62 @@ def _error(err: Exception) -> dict[str, Any]:
     return {"error": True, "code": "internal", "message": "Internal server error"}
 
 
-@mcp.tool(name="planner_get_overview")
-async def planner_get_overview(response_format: str = "concise", next_n: int = 5) -> dict[str, Any]:
-    """Today summary, open backlog count, and next timed tasks. Prefer this before listing everything."""
+def _date(value: str | None) -> date | None:
+    return date.fromisoformat(value) if value else None
+
+
+def _time(value: str | None) -> time | None:
+    return time.fromisoformat(value) if value else None
+
+
+def _tool_result(payload: dict[str, Any]) -> CallToolResult:
+    text = json.dumps(payload, default=str)
+    is_error = payload.get("error") is True
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structuredContent=payload,
+        isError=is_error,
+    )
+
+
+async def _run(fn: Callable[..., Awaitable[dict[str, Any]]], **kwargs: Any) -> CallToolResult:
     try:
         async for db, user in _session_and_user():
-            return await planner.planner_get_overview(
-                db, user, response_format=_fmt(response_format), next_n=next_n
-            )
+            return _tool_result(await fn(db, user, **kwargs))
     except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+        return _tool_result(_error(err))
+    return _tool_result({"error": True, "message": "no session"})
+
+
+@mcp.tool(name="planner_get_overview")
+async def planner_get_overview(response_format: str = "concise", next_n: int = 5) -> dict[str, Any]:
+    """Today summary, open backlog, overlaps, streaks, and settings. Prefer this before listing everything."""
+    return await _run(
+        planner.planner_get_overview, response_format=_fmt(response_format), next_n=next_n
+    )
 
 
 @mcp.tool(name="planner_find_tasks")
 async def planner_find_tasks(
     q: str | None = None,
     day: str | None = None,
+    day_from: str | None = None,
+    day_to: str | None = None,
     open_backlog: bool = False,
     inbox: bool = False,
     response_format: str = "concise",
 ) -> dict[str, Any]:
-    """Find tasks by search query, day (YYYY-MM-DD), open_backlog, or inbox. Do not use for mutations."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_find_tasks(
-                db,
-                user,
-                q=q,
-                day=date.fromisoformat(day) if day else None,
-                open_backlog=open_backlog,
-                inbox=inbox,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    """Find tasks. Prefer day_from+day_to spans of at most 7 days. Mutually exclusive with inbox/open_backlog."""
+    return await _run(
+        planner.planner_find_tasks,
+        q=q,
+        day=_date(day),
+        day_from=_date(day_from),
+        day_to=_date(day_to),
+        open_backlog=open_backlog,
+        inbox=inbox,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_create_task")
@@ -182,25 +217,27 @@ async def planner_create_task(
     is_all_day: bool = False,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+    client_request_id: str | None = None,
     response_format: str = "concise",
 ) -> dict[str, Any]:
-    """Create inbox (omit day), all-day (day + is_all_day), or timed (day + start_time HH:MM or HH:MM:SS)."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_create_task(
-                db,
-                user,
-                title=title,
-                day=date.fromisoformat(day) if day else None,
-                start_time=time.fromisoformat(start_time) if start_time else None,
-                is_all_day=is_all_day,
-                notes=notes,
-                duration_minutes=duration_minutes,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    """Create inbox (omit day), all-day (day + is_all_day), or timed (day + start_time). Alerts only when the user asked to remind/ping."""
+    return await _run(
+        planner.planner_create_task,
+        title=title,
+        day=_date(day),
+        start_time=_time(start_time),
+        is_all_day=is_all_day,
+        notes=notes,
+        duration_minutes=duration_minutes,
+        color=color,
+        symbol=symbol,
+        alerts=alerts,
+        client_request_id=client_request_id,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_update_task")
@@ -211,25 +248,27 @@ async def planner_update_task(
     start_time: str | None = None,
     is_all_day: bool | None = None,
     notes: str | None = None,
+    duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
     response_format: str = "concise",
 ) -> dict[str, Any]:
-    """Update a task by task_id from planner_find_tasks. Find first — never guess ids."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_update_task(
-                db,
-                user,
-                task_id=task_id,
-                title=title,
-                day=date.fromisoformat(day) if day else None,
-                start_time=time.fromisoformat(start_time) if start_time else None,
-                is_all_day=is_all_day,
-                notes=notes,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    """Update a task by task_id from planner_find_tasks. alerts=[] clears reminders. Find first — never guess ids."""
+    return await _run(
+        planner.planner_update_task,
+        task_id=task_id,
+        title=title,
+        day=_date(day),
+        start_time=_time(start_time),
+        is_all_day=is_all_day,
+        notes=notes,
+        duration_minutes=duration_minutes,
+        color=color,
+        symbol=symbol,
+        alerts=alerts,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_complete_tasks")
@@ -238,25 +277,35 @@ async def planner_complete_tasks(
     response_format: str = "concise",
 ) -> dict[str, Any]:
     """Mark tasks complete by task_id. Also accepts occurrence ids occ_<series-uuid>_<YYYY-MM-DD>."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_complete_tasks(
-                db, user, task_ids=task_ids, response_format=_fmt(response_format)
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(
+        planner.planner_complete_tasks, task_ids=task_ids, response_format=_fmt(response_format)
+    )
+
+
+@mcp.tool(name="planner_uncomplete_tasks")
+async def planner_uncomplete_tasks(
+    task_ids: list[str],
+    response_format: str = "concise",
+) -> dict[str, Any]:
+    """Uncheck tasks or occurrences. Use this for undo-complete, not restore of deletes."""
+    return await _run(
+        planner.planner_uncomplete_tasks, task_ids=task_ids, response_format=_fmt(response_format)
+    )
 
 
 @mcp.tool(name="planner_delete_tasks")
 async def planner_delete_tasks(task_ids: list[str]) -> dict[str, Any]:
     """Soft-delete one-off tasks by task_id. For one recurring day use planner_skip_occurrence; for whole rule use planner_delete_series."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_delete_tasks(db, user, task_ids=task_ids)
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(planner.planner_delete_tasks, task_ids=task_ids)
+
+
+@mcp.tool(name="planner_restore_tasks")
+async def planner_restore_tasks(
+    task_ids: list[str] | None = None,
+    series_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Undo a soft-delete within 5 minutes. Do not recreate; restore the same id."""
+    return await _run(planner.planner_restore_tasks, task_ids=task_ids, series_ids=series_ids)
 
 
 @mcp.tool(name="planner_reschedule")
@@ -265,36 +314,27 @@ async def planner_reschedule(
     day: str | None = None,
     start_time: str | None = None,
     move_open_before_to_today: bool = False,
+    snooze_minutes: int | None = None,
+    tomorrow: bool = False,
     response_format: str = "concise",
 ) -> dict[str, Any]:
-    """Move a one-off task to a new day/time, or explicitly move open backlog to today (never automatic)."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_reschedule(
-                db,
-                user,
-                task_id=task_id,
-                day=date.fromisoformat(day) if day else None,
-                start_time=time.fromisoformat(start_time) if start_time else None,
-                move_open_before_to_today=move_open_before_to_today,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    """Move a one-off, snooze (minutes or tomorrow), or explicitly move open backlog to today (never automatic)."""
+    return await _run(
+        planner.planner_reschedule,
+        task_id=task_id,
+        day=_date(day),
+        start_time=_time(start_time),
+        move_open_before_to_today=move_open_before_to_today,
+        snooze_minutes=snooze_minutes,
+        tomorrow=tomorrow,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_list_series")
 async def planner_list_series(response_format: str = "concise") -> dict[str, Any]:
     """List recurring series rules for the user."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_list_series(
-                db, user, response_format=_fmt(response_format)
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(planner.planner_list_series, response_format=_fmt(response_format))
 
 
 @mcp.tool(name="planner_create_series")
@@ -309,29 +349,31 @@ async def planner_create_series(
     is_all_day: bool = False,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+    client_request_id: str | None = None,
     response_format: str = "concise",
 ) -> dict[str, Any]:
-    """Create recurring series. freq=daily|weekly|monthly|yearly. weekdays 0=Mon..6=Sun for weekly."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_create_series(
-                db,
-                user,
-                title=title,
-                freq=freq,
-                start_day=date.fromisoformat(start_day),
-                interval=interval,
-                weekdays=weekdays,
-                end_day=date.fromisoformat(end_day) if end_day else None,
-                start_time=time.fromisoformat(start_time) if start_time else None,
-                is_all_day=is_all_day,
-                notes=notes,
-                duration_minutes=duration_minutes,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    """Create recurring series. freq=daily|weekly|monthly|yearly. weekdays 0=Mon..6=Sun for weekly. Alerts only for remind/ping."""
+    return await _run(
+        planner.planner_create_series,
+        title=title,
+        freq=freq,
+        start_day=date.fromisoformat(start_day),
+        interval=interval,
+        weekdays=weekdays,
+        end_day=_date(end_day),
+        start_time=_time(start_time),
+        is_all_day=is_all_day,
+        notes=notes,
+        duration_minutes=duration_minutes,
+        color=color,
+        symbol=symbol,
+        alerts=alerts,
+        client_request_id=client_request_id,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_update_series")
@@ -346,40 +388,35 @@ async def planner_update_series(
     is_all_day: bool | None = None,
     notes: str | None = None,
     duration_minutes: int | None = None,
+    color: str | None = None,
+    symbol: str | None = None,
+    alerts: list[dict[str, Any]] | None = None,
     response_format: str = "concise",
 ) -> dict[str, Any]:
     """Update a recurring series by series_id from planner_list_series / find."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_update_series(
-                db,
-                user,
-                series_id=series_id,
-                title=title,
-                freq=freq,
-                interval=interval,
-                weekdays=weekdays,
-                end_day=date.fromisoformat(end_day) if end_day else None,
-                start_time=time.fromisoformat(start_time) if start_time else None,
-                is_all_day=is_all_day,
-                notes=notes,
-                duration_minutes=duration_minutes,
-                response_format=_fmt(response_format),
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(
+        planner.planner_update_series,
+        series_id=series_id,
+        title=title,
+        freq=freq,
+        interval=interval,
+        weekdays=weekdays,
+        end_day=_date(end_day),
+        start_time=_time(start_time),
+        is_all_day=is_all_day,
+        notes=notes,
+        duration_minutes=duration_minutes,
+        color=color,
+        symbol=symbol,
+        alerts=alerts,
+        response_format=_fmt(response_format),
+    )
 
 
 @mcp.tool(name="planner_delete_series")
 async def planner_delete_series(series_id: str) -> dict[str, Any]:
     """Soft-delete an entire recurring series rule (all future occurrences)."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_delete_series(db, user, series_id=series_id)
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(planner.planner_delete_series, series_id=series_id)
 
 
 @mcp.tool(name="planner_skip_occurrence")
@@ -389,15 +426,99 @@ async def planner_skip_occurrence(
     day: str | None = None,
 ) -> dict[str, Any]:
     """Skip one occurrence day (hide it). Pass occurrence_id (occ_…) or series_id + day."""
-    try:
-        async for db, user in _session_and_user():
-            return await planner.planner_skip_occurrence(
-                db,
-                user,
-                occurrence_id=occurrence_id,
-                series_id=series_id,
-                day=date.fromisoformat(day) if day else None,
-            )
-    except Exception as err:  # noqa: BLE001
-        return _error(err)
-    return {"error": True, "message": "no session"}
+    return await _run(
+        planner.planner_skip_occurrence,
+        occurrence_id=occurrence_id,
+        series_id=series_id,
+        day=_date(day),
+    )
+
+
+@mcp.tool(name="planner_override_occurrence")
+async def planner_override_occurrence(
+    occurrence_id: str | None = None,
+    series_id: str | None = None,
+    day: str | None = None,
+    title: str | None = None,
+    start_time: str | None = None,
+    duration_minutes: int | None = None,
+    is_all_day: bool | None = None,
+) -> dict[str, Any]:
+    """Change just one occurrence (this Thursday). Do not update the whole series rule."""
+    return await _run(
+        planner.planner_override_occurrence,
+        occurrence_id=occurrence_id,
+        series_id=series_id,
+        day=_date(day),
+        title=title,
+        start_time=_time(start_time),
+        duration_minutes=duration_minutes,
+        is_all_day=is_all_day,
+    )
+
+
+@mcp.tool(name="planner_update_settings")
+async def planner_update_settings(
+    timezone: str | None = None,
+    day_starts_at: str | None = None,
+    briefing_morning_time: str | None = None,
+    briefing_evening_time: str | None = None,
+    quiet_hours_start: str | None = None,
+    quiet_hours_end: str | None = None,
+    reminders_enabled: bool | None = None,
+    overdue_enabled: bool | None = None,
+    guild_mode: str | None = None,
+    planner_channel_id: str | None = None,
+    capture_images: bool | None = None,
+    capture_voice: bool | None = None,
+    presence_enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Patch user settings. Time fields are HH:MM or 'off' to clear. Empty call is a no-op."""
+    return await _run(
+        planner.planner_update_settings,
+        timezone=timezone,
+        day_starts_at=day_starts_at,
+        briefing_morning_time=briefing_morning_time,
+        briefing_evening_time=briefing_evening_time,
+        quiet_hours_start=quiet_hours_start,
+        quiet_hours_end=quiet_hours_end,
+        reminders_enabled=reminders_enabled,
+        overdue_enabled=overdue_enabled,
+        guild_mode=guild_mode,
+        planner_channel_id=planner_channel_id,
+        capture_images=capture_images,
+        capture_voice=capture_voice,
+        presence_enabled=presence_enabled,
+    )
+
+
+@mcp.tool(name="planner_suggest_slots")
+async def planner_suggest_slots(
+    duration_minutes: int = 30,
+    day: str | None = None,
+    after_time: str | None = None,
+    count: int = 5,
+) -> dict[str, Any]:
+    """Propose free clock slots in 07:00–21:00. Do not schedule until the user confirms."""
+    return await _run(
+        planner.planner_suggest_slots,
+        duration_minutes=duration_minutes,
+        day=_date(day),
+        after_time=_time(after_time),
+        count=count,
+    )
+
+
+@mcp.tool(name="planner_toggle_note_item")
+async def planner_toggle_note_item(
+    task_id: str,
+    item_text: str,
+    checked: bool,
+) -> dict[str, Any]:
+    """Toggle a '- [ ]' / '- [x]' line in one-off task notes. Does not complete the parent task. occ_* rejected."""
+    return await _run(
+        planner.planner_toggle_note_item,
+        task_id=task_id,
+        item_text=item_text,
+        checked=checked,
+    )

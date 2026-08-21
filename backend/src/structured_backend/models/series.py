@@ -10,11 +10,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from structured_backend.db.base import Base
 
 if TYPE_CHECKING:
+    from structured_backend.models.alert import Alert
     from structured_backend.models.user import User
 
 
 class Series(Base):
     __tablename__ = "series"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_request_id", name="uq_series_user_client_request"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
@@ -31,6 +35,7 @@ class Series(Base):
     color: Mapped[str | None] = mapped_column(String(32))
     symbol: Mapped[str | None] = mapped_column(String(64))
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    client_request_id: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -46,6 +51,7 @@ class Series(Base):
     completions: Mapped[list[SeriesCompletion]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
+    alerts: Mapped[list[Alert]] = relationship(back_populates="series", cascade="all, delete-orphan")
 
 
 class SeriesException(Base):

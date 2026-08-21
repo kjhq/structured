@@ -4,12 +4,13 @@ import uuid
 from calendar import monthrange
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from structured_backend.errors import AppError
+from structured_backend.models.alert import Alert
 from structured_backend.models.series import Series, SeriesCompletion, SeriesException
 from structured_backend.models.user import User
 from structured_backend.schemas.series import (
@@ -19,6 +20,7 @@ from structured_backend.schemas.series import (
     SeriesRead,
     SeriesUpdate,
 )
+from structured_backend.schemas.task import AlertRead
 from structured_backend.timeutil import utcnow
 
 
@@ -50,11 +52,30 @@ def series_to_read(series: Series) -> SeriesRead:
         color=series.color,
         symbol=series.symbol,
         timezone=series.timezone,
+        alerts=[
+            AlertRead(kind=a.kind, offset_minutes=a.offset_minutes) for a in (series.alerts or [])
+        ],
     )
 
 
 def occurrence_id(series_id: uuid.UUID, day: date) -> str:
     return f"occ_{series_id}_{day.isoformat()}"
+
+
+def parse_occurrence_id(oid: str) -> tuple[uuid.UUID, date]:
+    if not oid.startswith("occ_"):
+        raise AppError(
+            "validation_error",
+            f"Not an occurrence id: {oid}",
+            hint="Occurrence ids look like occ_<series-uuid>_<YYYY-MM-DD>",
+        )
+    rest = oid[4:]
+    if len(rest) < 12 or rest[-11] != "_":
+        raise AppError("validation_error", f"Malformed occurrence id: {oid}")
+    try:
+        return uuid.UUID(rest[:-11]), date.fromisoformat(rest[-10:])
+    except ValueError as err:
+        raise AppError("validation_error", f"Malformed occurrence id: {oid}") from err
 
 
 def _matches(series: Series, day: date) -> bool:
@@ -98,6 +119,10 @@ class SeriesService:
         self.db = db
 
     async def create(self, user: User, data: SeriesCreate) -> Series:
+        if data.client_request_id:
+            existing = await self._by_client_request(user.id, data.client_request_id)
+            if existing:
+                return existing
         if data.freq == "weekly" and not data.weekdays:
             data = data.model_copy(update={"weekdays": [data.start_day.weekday()]})
         series = Series(
@@ -115,25 +140,63 @@ class SeriesService:
             color=data.color,
             symbol=data.symbol,
             timezone=user.timezone,
+            client_request_id=data.client_request_id,
+            alerts=[
+                Alert(kind=a.kind, offset_minutes=a.offset_minutes) for a in data.alerts
+            ],
         )
         self.db.add(series)
-        await self.db.commit()
-        await self.db.refresh(series)
-        return series
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            if data.client_request_id:
+                existing = await self._by_client_request(user.id, data.client_request_id)
+                if existing:
+                    if _series_payload_mismatch(existing, data):
+                        raise AppError(
+                            "conflict",
+                            "client_request_id already used with different payload",
+                            status_code=409,
+                            hint="Reuse the same title/schedule or use a new client_request_id",
+                        )
+                    return existing
+            raise
+        return await self.get(user, series.id)  # type: ignore[return-value]
 
     async def list(self, user: User) -> list[Series]:
         result = await self.db.execute(
-            select(Series).where(Series.user_id == user.id, Series.deleted_at.is_(None))
+            select(Series)
+            .options(selectinload(Series.alerts))
+            .where(Series.user_id == user.id, Series.deleted_at.is_(None))
         )
         return list(result.scalars().all())
 
-    async def get(self, user: User, series_id: uuid.UUID) -> Series | None:
+    async def get(
+        self, user: User, series_id: uuid.UUID, *, include_deleted: bool = False
+    ) -> Series | None:
+        stmt = (
+            select(Series)
+            .execution_options(populate_existing=True)
+            .options(
+                selectinload(Series.exceptions),
+                selectinload(Series.completions),
+                selectinload(Series.alerts),
+            )
+            .where(Series.id == series_id, Series.user_id == user.id)
+        )
+        if not include_deleted:
+            stmt = stmt.where(Series.deleted_at.is_(None))
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _by_client_request(self, user_id: uuid.UUID, client_request_id: str) -> Series | None:
         result = await self.db.execute(
             select(Series)
-            .options(selectinload(Series.exceptions), selectinload(Series.completions))
+            .options(selectinload(Series.alerts))
             .where(
-                Series.id == series_id,
-                Series.user_id == user.id,
+                Series.user_id == user_id,
+                Series.client_request_id == client_request_id,
                 Series.deleted_at.is_(None),
             )
         )
@@ -144,12 +207,17 @@ class SeriesService:
         if series is None:
             raise AppError("not_found", "Series not found", status_code=404)
         payload = data.model_dump(exclude_unset=True)
+        alerts = payload.pop("alerts", None)
         if "freq" in payload and payload["freq"] is not None:
             payload["freq"] = payload["freq"].value if hasattr(payload["freq"], "value") else payload["freq"]
         if "weekdays" in payload:
             payload["weekdays"] = _encode_weekdays(payload["weekdays"])
         for key, value in payload.items():
             setattr(series, key, value)
+        if alerts is not None:
+            series.alerts.clear()
+            for a in data.alerts or []:
+                series.alerts.append(Alert(kind=a.kind, offset_minutes=a.offset_minutes))
         series.updated_at = utcnow()
         await self.db.commit()
         return await self.get(user, series_id)  # type: ignore[return-value]
@@ -160,6 +228,32 @@ class SeriesService:
             raise AppError("not_found", "Series not found", status_code=404)
         series.deleted_at = utcnow()
         await self.db.commit()
+        from structured_backend.services.notifications import NotificationService
+
+        await NotificationService(self.db).skip_pending(
+            user, f"alert:occ:{series_id}:", reason="deleted"
+        )
+
+    async def get_deleted(self, user: User, series_id: uuid.UUID) -> Series | None:
+        series = await self.get(user, series_id, include_deleted=True)
+        if series is None or series.deleted_at is None:
+            return None
+        return series
+
+    async def restore(self, user: User, series_id: uuid.UUID) -> Series:
+        series = await self.get(user, series_id, include_deleted=True)
+        if series is None or series.deleted_at is None:
+            raise AppError("not_found", "Series not found", status_code=404)
+        if utcnow() - series.deleted_at > timedelta(minutes=5):
+            raise AppError(
+                "undo_expired",
+                "Undo window expired",
+                hint="Create it again",
+            )
+        series.deleted_at = None
+        series.updated_at = utcnow()
+        await self.db.commit()
+        return await self.get(user, series_id)  # type: ignore[return-value]
 
     async def add_exception(self, user: User, series_id: uuid.UUID, data: ExceptionCreate) -> Series:
         series = await self.get(user, series_id)
@@ -171,6 +265,11 @@ class SeriesService:
                 "Day does not match series recurrence",
                 hint="Pick an occurrence day that the rule generates",
             )
+        if data.kind == "override":
+            for e in list(series.exceptions):
+                if e.occurrence_day == data.occurrence_day and e.kind == "skip":
+                    await self.db.delete(e)
+            await self.db.flush()
         existing = next(
             (
                 e
@@ -180,7 +279,15 @@ class SeriesService:
             None,
         )
         if existing:
-            return series
+            existing.title = data.title if data.title is not None else existing.title
+            if data.start_time is not None:
+                existing.start_time = data.start_time
+            if data.duration_minutes is not None:
+                existing.duration_minutes = data.duration_minutes
+            if data.is_all_day is not None:
+                existing.is_all_day = data.is_all_day
+            await self.db.commit()
+            return await self.get(user, series_id)  # type: ignore[return-value]
         exc = SeriesException(
             series_id=series.id,
             occurrence_day=data.occurrence_day,
@@ -191,7 +298,14 @@ class SeriesService:
             is_all_day=data.is_all_day,
         )
         self.db.add(exc)
+        series.exceptions.append(exc)
         await self.db.commit()
+        if data.kind == "skip":
+            from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+            await NotificationService(self.db).skip_pending(
+                user, occ_source_prefix(series_id, data.occurrence_day), reason="skipped"
+            )
         return await self.get(user, series_id)  # type: ignore[return-value]
 
     async def complete_occurrence(self, user: User, series_id: uuid.UUID, day: date) -> None:
@@ -212,6 +326,21 @@ class SeriesService:
             await self.db.commit()
         except IntegrityError:
             await self.db.rollback()
+        from structured_backend.services.notifications import NotificationService, occ_source_prefix
+
+        await NotificationService(self.db).skip_pending(user, occ_source_prefix(series_id, day))
+
+    async def uncomplete_occurrence(self, user: User, series_id: uuid.UUID, day: date) -> None:
+        series = await self.get(user, series_id)
+        if series is None:
+            raise AppError("not_found", "Series not found", status_code=404)
+        await self.db.execute(
+            delete(SeriesCompletion).where(
+                SeriesCompletion.series_id == series.id,
+                SeriesCompletion.occurrence_day == day,
+            )
+        )
+        await self.db.commit()
 
     async def materialize_range(
         self, user: User, day_from: date, day_to: date
@@ -232,7 +361,12 @@ class SeriesService:
             )
         result = await self.db.execute(
             select(Series)
-            .options(selectinload(Series.exceptions), selectinload(Series.completions))
+            .execution_options(populate_existing=True)
+            .options(
+                selectinload(Series.exceptions),
+                selectinload(Series.completions),
+                selectinload(Series.alerts),
+            )
             .where(Series.user_id == user.id, Series.deleted_at.is_(None))
         )
         series_list = list(result.scalars().all())
@@ -280,6 +414,10 @@ class SeriesService:
                         color=series.color,
                         symbol=series.symbol,
                         notes=series.notes,
+                        alerts=[
+                            AlertRead(kind=a.kind, offset_minutes=a.offset_minutes)
+                            for a in (series.alerts or [])
+                        ],
                     )
                 )
             day += timedelta(days=1)
@@ -303,3 +441,32 @@ class SeriesService:
             if prev is None or occ.day > prev.day:
                 latest[occ.series_id] = occ
         return sorted(latest.values(), key=lambda o: o.day, reverse=True)
+
+
+def _series_payload_mismatch(existing: Series, data: SeriesCreate) -> bool:
+    weekdays = data.weekdays
+    if data.freq == "weekly" and not weekdays:
+        weekdays = [data.start_day.weekday()]
+    duration = data.duration_minutes or (30 if not data.is_all_day else None)
+    if existing.title != data.title:
+        return True
+    if existing.freq != data.freq.value:
+        return True
+    if existing.interval != data.interval:
+        return True
+    if _decode_weekdays(existing.weekdays) != weekdays:
+        return True
+    if existing.start_day != data.start_day:
+        return True
+    if existing.end_day != data.end_day:
+        return True
+    if existing.start_time != data.start_time:
+        return True
+    if existing.is_all_day != data.is_all_day:
+        return True
+    if existing.duration_minutes != duration:
+        return True
+    if existing.notes != data.notes:
+        return True
+    return False
+

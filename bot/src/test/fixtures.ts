@@ -1,3 +1,7 @@
+import { join } from "path";
+import { tmpdir } from "os";
+import { randomUUID } from "crypto";
+
 /** Explicit test env — never read production .env secrets in tests. */
 export const TEST_ENV: Record<string, string> = {
   DISCORD_BOT_TOKEN: "test-discord-token",
@@ -9,6 +13,8 @@ export const TEST_ENV: Record<string, string> = {
   TIMEZONE: "UTC",
   LLM_BASE_URL: "https://api.example.com/v1",
   LLM_MODEL: "test-model",
+  DATA_DIR: join(tmpdir(), `structured-bot-test-${randomUUID()}`),
+  NOTIFY_POLL_MS: "0",
 };
 
 const savedEnv = new Map<string, string | undefined>();
