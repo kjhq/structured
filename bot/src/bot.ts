@@ -266,10 +266,7 @@ function formatSettings(s: UserSettings): string {
     `briefing evening: ${s.briefing_evening_time ?? "off"}`,
     `quiet: ${s.quiet_hours_start && s.quiet_hours_end ? `${s.quiet_hours_start}–${s.quiet_hours_end}` : "off"}`,
     `reminders: ${s.reminders_enabled ? "on" : "off"}`,
-    `guild_mode: ${s.guild_mode}` +
-      (s.planner_channel_id ? ` (channel ${s.planner_channel_id})` : ""),
     `capture images/voice: ${s.capture_images ? "on" : "off"}/${s.capture_voice ? "on" : "off"}`,
-    `presence: ${s.presence_enabled ? "on" : "off"}`,
   ].join("\n");
 }
 
@@ -720,7 +717,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     return;
   }
   const parsed = parseCustomId(interaction.customId);
-  if (!parsed) {
+  if (!parsed || parsed.kind !== "item") {
     await interaction.reply({ content: "Unknown button.", flags: MessageFlags.Ephemeral });
     return;
   }
@@ -820,7 +817,7 @@ async function handleCaptureAndMessage(message: Message): Promise<void> {
       settings = null;
     }
   }
-  let gate = gateMessage(message, settings, botId);
+  let gate = gateMessage(message, null, botId);
   if (gate === "unauthorized") {
     await unauthorizedReply(message);
     return;

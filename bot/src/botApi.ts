@@ -61,11 +61,8 @@ export type UserSettings = {
   quiet_hours_end?: string | null;
   reminders_enabled: boolean;
   overdue_enabled?: boolean;
-  guild_mode: string;
-  planner_channel_id?: string | null;
   capture_images: boolean;
   capture_voice: boolean;
-  presence_enabled: boolean;
 };
 
 const settingsCache = new Map<string, { value: UserSettings; expires: number }>();

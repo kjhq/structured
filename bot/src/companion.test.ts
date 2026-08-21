@@ -9,11 +9,11 @@ describe("custom_id", () => {
     const id = customId("c", occ);
     assert.ok(id.length < 100);
     const parsed = parseCustomId(id);
-    assert.deepEqual(parsed, { op: "c", id: occ });
+    assert.deepEqual(parsed, { kind: "item", op: "c", id: occ });
   });
 
   it("parses ml without id", () => {
-    assert.deepEqual(parseCustomId("s1:ml"), { op: "ml", id: undefined });
+    assert.deepEqual(parseCustomId("s1:ml"), { kind: "item", op: "ml", id: undefined });
   });
 
   it("rejects unknown prefix", () => {

@@ -1,10 +1,8 @@
-import { ActivityType, type Client, type User } from "discord.js";
-import { authorizedUserIds, config } from "./config.js";
+import { type Client, type User } from "discord.js";
+import { config } from "./config.js";
 import {
   ackDelivery,
   failDelivery,
-  getSettings,
-  getView,
   notificationsDue,
   unclaimDelivery,
   type DueItem,
@@ -24,7 +22,6 @@ export type NotifyStatus = {
 
 let status: NotifyStatus = { ok: true, at: 0 };
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let presenceTimer: ReturnType<typeof setInterval> | null = null;
 
 export function notifyStatusLine(): string {
   if (config.NOTIFY_POLL_MS === 0) return "notify: off";
@@ -100,30 +97,6 @@ export async function pollDue(client: Client): Promise<void> {
   }
 }
 
-async function tickPresence(client: Client): Promise<void> {
-  const ids = authorizedUserIds();
-  if (ids.length !== 1 || !client.user) return;
-  const discordId = ids[0];
-  try {
-    const settings = await getSettings(discordId);
-    if (!settings.presence_enabled) {
-      await client.user.setPresence({ activities: [] });
-      return;
-    }
-    const today = (await getView(discordId, "today")) as {
-      items?: Array<{ title?: string; start_time?: string; completed_at?: string | null }>;
-    };
-    const inbox = (await getView(discordId, "inbox")) as { items?: unknown[] };
-    const next = (today.items ?? []).find((i) => i.start_time && !i.completed_at);
-    const name = next?.title
-      ? `${(next.start_time ?? "").slice(0, 5)} ${next.title}`.trim()
-      : `inbox (${(inbox.items ?? []).length})`;
-    await client.user.setActivity({ name: name.slice(0, 120), type: ActivityType.Watching });
-  } catch (err) {
-    console.error("presence tick failed", err);
-  }
-}
-
 export function startCompanionLoops(client: Client): void {
   if (config.NOTIFY_POLL_MS > 0) {
     void pollDue(client);
@@ -131,15 +104,9 @@ export function startCompanionLoops(client: Client): void {
       void pollDue(client);
     }, config.NOTIFY_POLL_MS);
   }
-  presenceTimer = setInterval(() => {
-    void tickPresence(client);
-  }, 60_000);
-  void tickPresence(client);
 }
 
 export function stopCompanionLoops(): void {
   if (pollTimer) clearInterval(pollTimer);
-  if (presenceTimer) clearInterval(presenceTimer);
   pollTimer = null;
-  presenceTimer = null;
 }
