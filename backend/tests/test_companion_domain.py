@@ -534,6 +534,36 @@ async def test_complete_skips_pending_deliveries(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_repeat_poll_with_existing_alerts_does_not_expire_user(db_session, monkeypatch):
+    now = datetime(2026, 8, 18, 5, 5, tzinfo=timezone.utc)  # 10:35 IST
+    _freeze(monkeypatch, now)
+    user = await user_service.ensure_user_for_discord(
+        db_session, discord_id="repeat-poll", timezone="Asia/Kolkata"
+    )
+    svc = TaskService(db_session)
+    await svc.create(
+        user,
+        TaskCreate(
+            title="Tea",
+            day=date(2026, 8, 18),
+            start_time=time(10, 30),
+            alerts=[AlertCreate(kind="start", offset_minutes=0)],
+        ),
+    )
+    nsvc = NotificationService(db_session)
+    await nsvc.enqueue_for_user(user, now)
+    first = await nsvc.claim_due(now, limit=50)
+    assert len(first) == 1
+
+    # Second poll: alert source_key already exists. Must not raise and must
+    # leave the user instance usable afterwards.
+    await nsvc.enqueue_for_user(user, now)
+    assert user.briefing_evening_time is None
+    again = await nsvc.claim_due(now, limit=50)
+    assert again == []
+
+
+@pytest.mark.asyncio
 async def test_briefing_catchup_within_two_hours(db_session, monkeypatch):
     now = datetime(2026, 8, 18, 2, 30, tzinfo=timezone.utc)  # 08:00 IST; briefing 07:00
     _freeze(monkeypatch, now)

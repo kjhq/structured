@@ -187,6 +187,14 @@ class NotificationService:
         status: str = "pending",
         skip_reason: str | None = None,
     ) -> None:
+        dup = await self.db.scalar(
+            select(NotificationDelivery.id).where(
+                NotificationDelivery.user_id == user.id,
+                NotificationDelivery.source_key == source_key,
+            )
+        )
+        if dup is not None:
+            return
         row = NotificationDelivery(
             user_id=user.id,
             kind=kind,
@@ -200,7 +208,10 @@ class NotificationService:
         try:
             await self.db.commit()
         except IntegrityError:
+            # Concurrent poll won the race. rollback() expires modified
+            # instances, so reload the user before callers touch attrs again.
             await self.db.rollback()
+            await self.db.refresh(user)
 
     async def drop_pending(self, user: User, prefix: str) -> None:
         """Delete pending/claimed rows for a source_key prefix (snooze). Keep delivered."""
