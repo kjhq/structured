@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structured_backend.errors import AppError
 from structured_backend.models.user import User
 from structured_backend.schemas.series import ExceptionCreate
-from structured_backend.schemas.task import AlertCreate, TaskCreate, TaskUpdate
+from structured_backend.schemas.task import AlertCreate, TaskUpdate
 from structured_backend.services.series import SeriesService, parse_occurrence_id
 from structured_backend.services.tasks import TaskService
 from structured_backend.timeutil import user_local_now, user_today

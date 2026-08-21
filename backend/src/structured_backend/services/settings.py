@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
