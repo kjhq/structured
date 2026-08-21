@@ -62,12 +62,10 @@ export async function replySafe(
 }
 
 export function labelOf(interaction: RepliableInteraction): string {
-  if ("commandName" in interaction && typeof interaction.commandName === "string") {
-    return `/${interaction.commandName}`;
-  }
+  if (interaction.isChatInputCommand()) return `/${interaction.commandName}`;
+  if (interaction.isMessageContextMenuCommand()) return `menu ${interaction.commandName}`;
   if (interaction.isButton()) return `button ${interaction.customId}`;
-  if (interaction.isModalSubmit()) return `modal ${interaction.customId}`;
-  return `menu ${interaction.customId}`;
+  return `modal ${interaction.customId}`;
 }
 
 /**

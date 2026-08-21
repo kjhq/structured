@@ -22,6 +22,8 @@ function fakeInteraction(overrides: Partial<Record<string, unknown>> = {}) {
   const interaction = {
     isButton: () => false,
     isModalSubmit: () => false,
+    isChatInputCommand: () => true,
+    isMessageContextMenuCommand: () => false,
     commandName: "settings",
     customId: "",
     user: { id: FIXTURE_USERS.alice },
@@ -70,7 +72,7 @@ describe("labelOf", () => {
 
   it("labels buttons", () => {
     const { interaction } = fakeInteraction({
-      commandName: undefined,
+      isChatInputCommand: () => false,
       isButton: () => true,
       customId: "s2:c:task-1",
     });
@@ -101,7 +103,7 @@ describe("withAck", () => {
 
   it("auto-defers when handler stalls past 1s", async () => {
     const { interaction, state } = fakeInteraction();
-    let release: (() => void) | null = null;
+    let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -111,7 +113,7 @@ describe("withAck", () => {
     });
     await new Promise((r) => setTimeout(r, 1300));
     assert.ok(state.deferCalls >= 1, "auto-defer should have fired");
-    release?.();
+    release();
     await promise;
   });
 
